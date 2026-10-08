@@ -4,10 +4,22 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>PINTAR</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&display=swap"
+      rel="stylesheet"
+    />
+    <link
+      rel="stylesheet"
+      href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+      integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+      crossorigin=""
+    />
     <link rel="stylesheet" href="style.css" />
   </head>
 
-  <body>
+  <body data-view="area">
     <header class="topbar">
       <div class="brand">
         <img class="logo" src="assets/logo_pt_inti.svg" alt="Logo PT INTI" />
@@ -16,18 +28,36 @@
           <small>Peta Interaktif Area &amp; Tenant PT INTI</small>
         </div>
       </div>
-      <button id="backBtn" hidden>← Kembali</button>
-      <div class="topbar-location">
-        <span class="location-mark" aria-hidden="true"></span>
-        <div>
-          <small>LOKASI AKTIF</small>
-          <h1 id="title">Jl. Moch Toha No. 77</h1>
+      <div class="topbar-navigation">
+        <button id="backBtn" hidden>← Kembali</button>
+        <nav class="breadcrumb" aria-label="Breadcrumb">
+          <span>Jl. Moch Toha No. 77</span>
+          <span class="breadcrumb-separator" aria-hidden="true">/</span>
+          <h1 id="title">Area Kantor Pusat</h1>
+        </nav>
+      </div>
+      <div class="topbar-actions">
+        <span class="system-status"><span></span>Sistem Aktif</span>
+        <span class="update-time">Update 10:42 WIB</span>
+        <button class="notification-button" type="button" aria-label="Notifikasi">
+          <span class="notification-icon" aria-hidden="true"></span>
+          <span class="notification-dot" aria-hidden="true"></span>
+        </button>
+        <div class="admin-user">
+          <span class="admin-avatar" aria-hidden="true">A</span>
+          <span>Admin</span>
         </div>
       </div>
     </header>
 
     <main class="layout">
       <aside id="sidebar" class="sidebar" hidden>
+        <div class="map-navigation">
+          <label for="buildingSelect">Pilih gedung</label>
+          <select id="buildingSelect"></select>
+          <label for="floorSelect">Pilih lantai</label>
+          <select id="floorSelect" disabled></select>
+        </div>
         <div id="summary" class="summary"></div>
         <input
           id="search"
@@ -40,17 +70,62 @@
       </aside>
 
       <div class="stage">
-        <div class="stage-heading">
-          <div>
-            <span class="stage-eyebrow">PINTAR · PETA INTERAKTIF</span>
-            <h2>Pemetaan Area &amp; Tenant</h2>
-            <p>Jelajahi gedung, lantai, dan unit PT INTI melalui peta.</p>
+        <section class="landing-overview" aria-label="Ringkasan Area Kantor Pusat">
+          <div class="kpi-grid">
+            <article class="kpi-card">
+              <span class="kpi-label">Gedung</span>
+              <strong>3</strong>
+              <span class="kpi-note">Total area terpetakan</span>
+            </article>
+            <article class="kpi-card">
+              <span class="kpi-label">Gedung Aktif</span>
+              <strong>1 <span class="kpi-unit">dari 3</span></strong>
+              <span class="kpi-note">Siap dipantau</span>
+            </article>
+            <article class="kpi-card">
+              <span class="kpi-label">Total Unit</span>
+              <strong>24</strong>
+              <span class="kpi-note">Unit terdaftar</span>
+            </article>
+            <article class="kpi-card kpi-card-attention">
+              <span class="kpi-label">Perlu Perhatian</span>
+              <strong>3</strong>
+              <span class="kpi-note">Item membutuhkan tindak lanjut</span>
+            </article>
           </div>
-          <span class="stage-badge"><span></span> Jl. Moch Toha No. 77</span>
-        </div>
+        </section>
         <section id="map"></section>
+        <div class="map-legend" aria-label="Legenda status gedung">
+          <span><i class="legend-dot legend-dot-active"></i>Aktif</span>
+          <span><i class="legend-dot legend-dot-soon"></i>Segera Tersedia</span>
+        </div>
         <div id="hint" class="hint"></div>
       </div>
+
+      <aside class="attention-panel" aria-label="Perlu Perhatian">
+        <div class="attention-heading">
+          <div>
+            <span class="panel-eyebrow">MONITORING</span>
+            <h2>Perlu Perhatian</h2>
+          </div>
+          <span class="attention-count">3</span>
+        </div>
+        <div class="attention-list">
+          <article class="attention-item">
+            <span class="attention-icon attention-icon-payment" aria-hidden="true">!</span>
+            <div><b>Pembayaran tertunggak</b><small>1 unit · Perlu ditinjau</small></div>
+          </article>
+          <article class="attention-item">
+            <span class="attention-icon attention-icon-document" aria-hidden="true">!</span>
+            <div><b>Dokumen akan berakhir</b><small>1 kontrak · Segera berakhir</small></div>
+          </article>
+          <article class="attention-item">
+            <span class="attention-icon attention-icon-data" aria-hidden="true">i</span>
+            <div><b>Data belum lengkap</b><small>1 unit · Perlu diperbarui</small></div>
+          </article>
+        </div>
+        <div class="attention-footnote"><span></span>Ringkasan indikator pemantauan</div>
+      </aside>
 
       <aside id="detail" class="detail" hidden>
         <button id="closeDetail" class="close" aria-label="Tutup">×</button>
@@ -62,8 +137,18 @@
       </aside>
     </main>
 
+    <footer class="status-footer">
+      <span class="footer-status"><span></span> PINTAR · Sistem monitoring internal</span>
+      <span>Data terakhir diperbarui · 08 Oktober 2026 · 10:42 WIB</span>
+    </footer>
+
     <script src="data.js"></script>
     <script src="mapView.js"></script>
+    <script
+      src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+      integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+      crossorigin=""
+    ></script>
     <script src="app.js"></script>
   </body>
 </html>

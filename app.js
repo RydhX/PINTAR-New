@@ -8,13 +8,14 @@ const SVG_NS = "http://www.w3.org/2000/svg";
 
 /* ---------- STATE ---------- */
 const state = {
-  view: "area", // "area" | "floors" | "plan"
+  view: "area", // "area" | "floors" | "plan" | "unavailable"
   buildingId: null,
   floorId: null,
 };
 
 let renderToken = 0;
 const registry = new Map();
+let areaBasemap = null;
 
 /* ---------- ELEMEN HTML ---------- */
 const mapEl = document.getElementById("map");
@@ -27,6 +28,8 @@ const unitListEl = document.getElementById("unitList");
 const searchEl = document.getElementById("search");
 const statusEl = document.getElementById("statusFilter");
 const hintEl = document.getElementById("hint");
+const buildingSelectEl = document.getElementById("buildingSelect");
+const floorSelectEl = document.getElementById("floorSelect");
 
 /* ---------- STATUS (warna ditentukan di satu tempat) ---------- */
 const STATUS = {
@@ -34,6 +37,21 @@ const STATUS = {
   occupied: { label: "Terisi", color: "#22c55e" },
   overdue: { label: "Tunggakan", color: "#ef4444" },
 };
+
+const BUILDING_OPTIONS = [
+  { id: "GKP", label: "GKP - Gedung Kantor Pusat" },
+  { id: "GPT", label: "Gedung GPT" },
+  { id: "GAK3", label: "Gedung GAK3" },
+];
+
+const FLOOR_OPTIONS = [
+  { id: "DASAR", label: "Lantai Dasar" },
+  ...Array.from({ length: 9 }, (_, index) => {
+    const level = index + 2;
+    return { id: `L${level}`, label: `Lantai ${level}` };
+  }),
+  { id: "ROOFTOP", label: "Rooftop" },
+];
 
 function statusOf(room) {
   if (room.status === "vacant") return "vacant";
@@ -49,6 +67,34 @@ statusEl.innerHTML =
 
 searchEl.addEventListener("input", applyFilter);
 statusEl.addEventListener("change", applyFilter);
+buildingSelectEl.addEventListener("change", () => {
+  const buildingOption = BUILDING_OPTIONS.find(
+    (item) => item.id === buildingSelectEl.value,
+  );
+  if (!buildingOption) return;
+
+  const building = DATA.buildings.find(
+    (item) => item.id === buildingSelectEl.value,
+  );
+  state.buildingId = buildingOption.id;
+  if (building?.active && building.floors.length) {
+    state.floorId = building.floors[0].id;
+    state.view = "plan";
+  } else {
+    state.floorId = "DASAR";
+    state.view = "unavailable";
+  }
+  render();
+});
+floorSelectEl.addEventListener("change", () => {
+  const building = getBuilding();
+  const floor = building?.floors.find(
+    (item) => item.id === floorSelectEl.value,
+  );
+  state.floorId = floorSelectEl.value;
+  state.view = floor ? "plan" : "unavailable";
+  render();
+});
 
 /* ---------- DATA ---------- */
 // Isi nilai bawaan satu kali, supaya data.js bisa singkat
@@ -122,25 +168,66 @@ async function loadSVG(file) {
 
 /* ---------- RENDER (satu pintu) ---------- */
 async function render() {
+  document.body.dataset.view = state.view;
+  updateNavigationSelectors();
+  if (state.view !== "area" && areaBasemap) {
+    areaBasemap.remove();
+    areaBasemap = null;
+  }
+
   detailEl.hidden = true;
   backBtn.hidden = state.view === "area";
-  sidebarEl.hidden = state.view !== "plan";
+  sidebarEl.hidden = state.view !== "plan" && state.view !== "unavailable";
   MapView.detach();
 
   hintEl.textContent = {
     area: "Klik gedung yang disorot untuk melihat lantainya",
     floors: "",
     plan: "Klik ruang pada denah. Scroll untuk zoom, seret untuk menggeser",
+    unavailable: "",
   }[state.view];
 
   try {
     if (state.view === "area") await showArea();
     else if (state.view === "floors") showFloors();
-    else await showFloorPlan();
+    else if (state.view === "plan") await showFloorPlan();
+    else showUnavailablePlan();
   } catch (err) {
     console.error(err);
     mapEl.innerHTML = `<p class="error">Gagal memuat: ${err.message}</p>`;
   }
+}
+
+function updateNavigationSelectors() {
+  buildingSelectEl.innerHTML = BUILDING_OPTIONS.map(
+    (building) => `<option value="${building.id}">${building.label}</option>`,
+  ).join("");
+  buildingSelectEl.value = state.buildingId || "";
+
+  floorSelectEl.innerHTML = FLOOR_OPTIONS.map(
+    (floor) => `<option value="${floor.id}">${floor.label}</option>`,
+  ).join("");
+  floorSelectEl.disabled = !state.buildingId;
+  floorSelectEl.value = state.floorId || "";
+}
+
+function showUnavailablePlan() {
+  const building = BUILDING_OPTIONS.find(
+    (item) => item.id === state.buildingId,
+  );
+  const floor = FLOOR_OPTIONS.find((item) => item.id === state.floorId);
+  if (!building || !floor) {
+    throw new Error("Pilihan gedung atau lantai tidak valid.");
+  }
+
+  titleEl.textContent = `${building.label} - ${floor.label}`;
+  mapEl.innerHTML = `
+    <div class="plan-unavailable">
+      <div class="plan-unavailable-icon" aria-hidden="true">i</div>
+      <h2>Denah belum tersedia</h2>
+      <p>Denah ${building.label}, ${floor.label} belum tersedia.</p>
+      <small>Pilih gedung atau lantai lain dari panel di samping.</small>
+    </div>`;
 }
 
 function markZones() {
@@ -171,7 +258,12 @@ function checkSvgAgainstData(rooms = {}) {
 
 /* ---------- TAHAP 1: LOKASI ---------- */
 async function showArea() {
-  titleEl.textContent = "Jl. Moch Toha No. 77 - PT INTI";
+  titleEl.textContent = "Area Kantor Pusat";
+  if (!window.L) {
+    throw new Error(
+      "Peta dasar gagal dimuat. Periksa koneksi internet, lalu muat ulang halaman.",
+    );
+  }
   await loadSVG(AREA_SVG);
 
   DATA.buildings.forEach((b) => {
@@ -193,6 +285,34 @@ async function showArea() {
       render();
     });
   });
+
+  const svg = mapEl.querySelector("svg");
+  // Perkiraan dari screenshot; ganti dengan batas GPS survei untuk presisi.
+  const center = [-6.9386182, 107.6075028];
+  const overlayBounds = L.latLngBounds(
+  [-6.9398602, 107.605700],
+  [-6.9373762, 107.609386]
+);
+
+  areaBasemap = L.map(mapEl, {
+    center,
+    zoom: 19,
+    minZoom: 17,
+    maxZoom: 20,
+    zoomControl: false,
+    attributionControl: true,
+  });
+  L.tileLayer(
+    "https://tiles.stadiamaps.com/tiles/alidade_smooth_dark/{z}/{x}/{y}{r}.png",
+    {
+      maxZoom: 20,
+      attribution:
+        '&copy; <a href="https://stadiamaps.com/attribution/">Stadia Maps</a> &copy; <a href="https://openmaptiles.org/">OpenMapTiles</a> &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+    },
+  ).addTo(areaBasemap);
+  L.control.zoom({ position: "topright" }).addTo(areaBasemap);
+  L.svgOverlay(svg, overlayBounds, { interactive: true }).addTo(areaBasemap);
+  requestAnimationFrame(() => areaBasemap?.invalidateSize());
 }
 
 /* ---------- TAHAP 2: PILIH LANTAI ---------- */
@@ -331,7 +451,7 @@ function addLabels(rooms = {}) {
     if (!el) return;
 
     const box = el.getBBox();
-    const text = room.status === "vacant" ? "KOSONG" : (room.tenant || roomId);
+    const text = room.status === "vacant" ? "KOSONG" : room.tenant || roomId;
 
     const maxChars = Math.max(6, Math.floor(box.width / (FONT * 0.6)));
     const lines = [];
@@ -423,6 +543,10 @@ function showDetail(roomId) {
 function goBack() {
   if (state.view === "plan") {
     state.view = "floors";
+    state.floorId = null;
+  } else if (state.view === "unavailable") {
+    state.view = "area";
+    state.buildingId = null;
     state.floorId = null;
   } else if (state.view === "floors") {
     state.view = "area";
