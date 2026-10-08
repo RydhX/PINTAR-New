@@ -95,6 +95,26 @@
           </div>
         </section>
         <section id="map"></section>
+        <aside
+          id="floorPicker"
+          class="floor-picker"
+          aria-labelledby="floorPickerTitle"
+          hidden
+        >
+          <button
+            id="closeFloorPicker"
+            class="floor-picker-close"
+            type="button"
+            aria-label="Tutup pilihan lantai"
+          >×</button>
+          <span class="floor-picker-eyebrow">PILIH LANTAI</span>
+          <h2 id="floorPickerTitle"></h2>
+          <p>Pilih denah lantai yang ingin dibuka.</p>
+          <label class="floor-picker-label" for="floorPickerSelect"
+            >Lantai</label
+          >
+          <select id="floorPickerSelect" class="floor-picker-select"></select>
+        </aside>
         <div class="map-legend" aria-label="Legenda status gedung">
           <span><i class="legend-dot legend-dot-active"></i>Aktif</span>
           <span><i class="legend-dot legend-dot-soon"></i>Segera Tersedia</span>
