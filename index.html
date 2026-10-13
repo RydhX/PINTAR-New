@@ -37,8 +37,8 @@
         </nav>
       </div>
       <div class="topbar-actions">
-        <span class="system-status"><span></span>Sistem Aktif</span>
-        <span class="update-time">Update 10:42 WIB</span>
+        <span id="syncStatus" class="system-status sync-idle" role="status" aria-live="polite"><span></span>Endpoint belum dikonfigurasi</span>
+        <span id="updateTime" class="update-time">Belum ada pembaruan</span>
         <button class="notification-button" type="button" aria-label="Notifikasi">
           <span class="notification-icon" aria-hidden="true"></span>
           <span class="notification-dot" aria-hidden="true"></span>
@@ -74,23 +74,23 @@
           <div class="kpi-grid">
             <article class="kpi-card">
               <span class="kpi-label">Gedung</span>
-              <strong>3</strong>
+              <strong id="dashboardBuildingCount">0</strong>
               <span class="kpi-note">Total area terpetakan</span>
             </article>
             <article class="kpi-card">
               <span class="kpi-label">Gedung Aktif</span>
-              <strong>1 <span class="kpi-unit">dari 3</span></strong>
+              <strong><span id="dashboardActiveBuildingCount">0</span> <span id="dashboardTotalBuildingCount" class="kpi-unit">dari 0</span></strong>
               <span class="kpi-note">Siap dipantau</span>
             </article>
             <article class="kpi-card">
               <span class="kpi-label">Total Unit</span>
-              <strong>24</strong>
-              <span class="kpi-note">Unit terdaftar</span>
+              <strong id="dashboardUnitCount">0</strong>
+              <span id="dashboardOccupancyNote" class="kpi-note">Unit terdaftar</span>
             </article>
             <article class="kpi-card kpi-card-attention">
-              <span class="kpi-label">Perlu Perhatian</span>
-              <strong>3</strong>
-              <span class="kpi-note">Item membutuhkan tindak lanjut</span>
+              <span class="kpi-label">Tunggakan Pembayaran</span>
+              <strong id="dashboardOverdueCount">0</strong>
+              <span class="kpi-note">Unit perlu ditinjau</span>
             </article>
           </div>
         </section>
@@ -128,20 +128,20 @@
             <span class="panel-eyebrow">MONITORING</span>
             <h2>Perlu Perhatian</h2>
           </div>
-          <span class="attention-count">3</span>
+          <span id="attentionCount" class="attention-count">0</span>
         </div>
         <div class="attention-list">
           <article class="attention-item">
             <span class="attention-icon attention-icon-payment" aria-hidden="true">!</span>
-            <div><b>Pembayaran tertunggak</b><small>1 unit · Perlu ditinjau</small></div>
+            <div><b>Pembayaran tertunggak</b><small id="attentionPaymentCount">0 unit · Perlu ditinjau</small></div>
           </article>
           <article class="attention-item">
             <span class="attention-icon attention-icon-document" aria-hidden="true">!</span>
-            <div><b>Dokumen akan berakhir</b><small>1 kontrak · Segera berakhir</small></div>
+            <div><b>Unit kosong</b><small id="attentionVacantCount">0 unit · Tersedia</small></div>
           </article>
           <article class="attention-item">
             <span class="attention-icon attention-icon-data" aria-hidden="true">i</span>
-            <div><b>Data belum lengkap</b><small>1 unit · Perlu diperbarui</small></div>
+            <div><b>Data tenant belum lengkap</b><small id="attentionIncompleteCount">0 unit · Perlu diperbarui</small></div>
           </article>
         </div>
         <div class="attention-footnote"><span></span>Ringkasan indikator pemantauan</div>
@@ -151,18 +151,102 @@
         <button id="closeDetail" class="close" aria-label="Tutup">×</button>
         <div class="eyebrow">Detail unit</div>
         <h2 id="dUnit"></h2>
-        <span id="dStatus" class="pill"></span>
+        <div class="detail-status-actions">
+          <span id="dStatus" class="pill"></span>
+          <div class="detail-actions">
+            <button id="editRoomBtn" class="icon-action edit-action" type="button" aria-label="Ubah data unit" title="Ubah data unit">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L8 18l-4 1 1-4Z"/></svg>
+            </button>
+            <button id="clearTenantBtn" class="icon-action delete-action" type="button" aria-label="Kosongkan data tenant" title="Kosongkan data tenant">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="m19 6-1 14H6L5 6"/><path d="M10 11v5M14 11v5"/></svg>
+            </button>
+          </div>
+        </div>
         <p id="dTenant" class="tenant"></p>
         <div id="dRows"></div>
+        <form id="roomEditor" class="room-editor" hidden>
+          <p class="editor-warning">
+            Prototipe tanpa autentikasi. Siapa pun yang membuka website dapat mengubah atau mengosongkan data tenant di spreadsheet.
+          </p>
+          <label>Nama tenant<input name="tenant" type="text" maxlength="200" /></label>
+          <label>Status okupansi
+            <select name="occupancy_status" required>
+              <option value="occupied">Terisi</option>
+              <option value="vacant">Kosong</option>
+              <option value="in_progress">Dalam Proses</option>
+            </select>
+          </label>
+          <label>Status pembayaran
+            <select name="payment_status">
+              <option value="">-</option>
+              <option value="Lunas">Lunas</option>
+              <option value="Belum bayar">Belum bayar</option>
+              <option value="Partial paid">Partial paid</option>
+              <option value="Termin">Termin</option>
+            </select>
+          </label>
+          <label>Luas (m²)<input name="area_m2" type="number" min="0" step="any" /></label>
+          <label>Mulai sewa<input name="start_date" type="date" /></label>
+          <label>Akhir sewa<input name="end_date" type="date" /></label>
+          <label>Sewa per bulan (Rp)
+            <input name="rent_per_month" type="text" inputmode="numeric" autocomplete="off" data-currency />
+            <small class="currency-preview" data-currency-preview="rent_per_month" aria-live="polite"></small>
+          </label>
+          <label>Tunggakan (Rp)
+            <input name="outstanding_amount" type="text" inputmode="numeric" autocomplete="off" data-currency />
+            <small class="currency-preview" data-currency-preview="outstanding_amount" aria-live="polite"></small>
+          </label>
+          <section id="installmentEditor" class="installment-editor" hidden aria-label="Pembayaran termin">
+            <h3>Rincian pembayaran termin</h3>
+            <label>Total nilai kontrak (Rp)
+              <input name="contract_value" type="text" inputmode="numeric" autocomplete="off" data-currency />
+              <small class="currency-preview" data-currency-preview="contract_value" aria-live="polite"></small>
+            </label>
+            <div id="installmentList" class="installment-list"></div>
+            <button id="addInstallmentBtn" class="add-installment" type="button">+ Tambah termin</button>
+            <div class="installment-summary" aria-live="polite">
+              <span>Total dibayar <b id="installmentPaidTotal">Rp0</b></span>
+              <span>Kekurangan hingga lunas <b id="installmentRemaining">Rp0</b></span>
+            </div>
+          </section>
+          <label>Pembayaran terakhir<input name="last_payment_date" type="date" /></label>
+          <label>Konsumsi listrik (kWh)<input name="electricity_kwh" type="number" min="0" step="any" /></label>
+          <label>Konsumsi air (m³)<input name="water_m3" type="number" min="0" step="any" /></label>
+          <label>PIC<input name="pic" type="text" maxlength="200" /></label>
+          <label>Kontak<input name="contact" type="text" maxlength="200" /></label>
+          <label>Status pemeliharaan<input name="maintenance_status" type="text" maxlength="200" /></label>
+          <label>Status keluhan<input name="complaint_status" type="text" maxlength="200" /></label>
+          <label>Catatan<textarea name="notes" rows="3" maxlength="1000"></textarea></label>
+          <div class="editor-actions">
+            <button type="submit" class="editor-save">Simpan ke spreadsheet</button>
+            <button id="cancelRoomEdit" type="button" class="editor-cancel">Batal</button>
+          </div>
+          <p id="editorStatus" class="editor-status" role="status" aria-live="polite"></p>
+        </form>
       </aside>
     </main>
 
+    <dialog id="actionConfirm" class="action-confirm" aria-labelledby="actionConfirmTitle" aria-describedby="actionConfirmMessage">
+      <div class="action-confirm-card">
+        <div class="action-confirm-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24"><path d="M12 3 2.8 19h18.4L12 3Z"/><path d="M12 9v4m0 3h.01"/></svg>
+        </div>
+        <h2 id="actionConfirmTitle"></h2>
+        <p id="actionConfirmMessage"></p>
+        <div class="action-confirm-buttons">
+          <button id="actionConfirmCancel" class="confirm-cancel" type="button">Batal</button>
+          <button id="actionConfirmAccept" class="confirm-accept" type="button"></button>
+        </div>
+      </div>
+    </dialog>
+
     <footer class="status-footer">
       <span class="footer-status"><span></span> PINTAR · Sistem monitoring internal</span>
-      <span>Data terakhir diperbarui · 08 Oktober 2026 · 10:42 WIB</span>
+      <span id="footerUpdateTime">Data belum diperbarui dari Google Sheets</span>
     </footer>
 
     <script src="data.js"></script>
+    <script src="data/sheets.js"></script>
     <script src="mapView.js"></script>
     <script
       src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"

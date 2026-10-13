@@ -1,4 +1,4 @@
-/* Satu-satunya sumber data PINTAR */
+/* Struktur peta dan data cadangan awal PINTAR */
 const AREA_SVG = "assets/Area77_DraftTata.svg";
 
 const DATA = {

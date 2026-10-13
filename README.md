@@ -43,8 +43,12 @@ HTML, CSS, dan JavaScript murni. Tidak ada framework, proses build, atau library
 PINTAR/
 ├── index.html      Kerangka halaman
 ├── style.css       Seluruh tampilan
-├── data.js         Satu-satunya sumber data (gedung, lantai, ruang)
+├── data.js         Struktur peta dan data cadangan awal
+├── data/
+│   └── sheets.js   Sinkronisasi Google Sheets (JSONP read-only)
 ├── app.js          Logika aplikasi
+├── Code.gs         Template endpoint Apps Script (salin dan konfigurasi manual)
+├── GOOGLE_SHEETS_SETUP.md        Panduan konfigurasi integrasi Google Sheets
 └── assets/
     ├── Area77_DraftTata.svg      Site plan Area 77
     └── GKP_LT_2_DraftTata.svg    Denah Gedung Kantor Pusat, Lantai 2
@@ -64,7 +68,40 @@ Aplikasi memakai satu objek `state` dan satu fungsi `render()`. Setiap klik hany
 
 ## Mengelola data
 
-Semua data berada di `data.js`.
+Data ruang disegarkan dari Google Sheets melalui URL Apps Script di
+`data/sheets.js`. `Code.gs` berisi handler baca JSONP dan handler tulis yang
+siap disalin ke project Apps Script. Isi ID spreadsheet dan nama tab sesuai
+master, lalu deploy versi terbaru.
+
+Editor unit pada panel kanan memperbarui baris unit yang sudah ada atau
+menambahkan baris untuk unit terpetakan yang belum memiliki data.
+Penyimpanan dikirim sebagai POST lintas-origin tanpa membaca respons langsung,
+lalu diverifikasi dengan membaca ulang snapshot Google Sheets. Baris baru hanya
+ditambahkan bila kombinasi gedung/lantai/room_id belum ada; header opsional hanya
+dapat ditulis jika kolom tersebut tersedia.
+Tanggal dipilih lewat kalender; sewa dan tunggakan menampilkan pratinjau Rupiah
+berformat saat nilai diketik. Aksi kosongkan data tenant mempertahankan baris
+serta identitas gedung/lantai/room_id, menghapus detail tenant, dan menetapkan
+okupansi menjadi kosong; hasilnya diverifikasi melalui snapshot berikutnya.
+Status pembayaran **Termin** mendukung nilai kontrak manual dan nominal termin
+dinamis. Apps Script menambahkan kolom `termin_1`, `termin_2`, dan seterusnya
+serta kolom nilai kontrak/kekurangan sesuai input, lalu menghitung kekurangan
+hingga lunas. Tambahkan `Termin` ke pilihan validasi dropdown pembayaran di
+spreadsheet jika kolom tersebut menggunakan daftar pilihan.
+
+**Peringatan prototipe:** `PUBLIC_WRITE_APPROVED` aktif pada template dan web
+app Apps Script harus dapat diakses publik agar GitHub Pages dapat mengirim
+perubahan. Karena belum ada autentikasi dan URL endpoint terlihat di frontend,
+siapa pun yang membuka website dapat mengubah atau menambahkan baris unit di
+spreadsheet master. Gunakan hanya
+selama prototipe dan nonaktifkan penulisan publik sebelum dipakai operasional.
+Jangan masukkan data kontak/kontrak/pembayaran yang tidak disetujui untuk
+dipublikasikan. Menyembunyikan tombol pada frontend bukan kontrol akses.
+
+`data.js` menyimpan struktur gedung/lantai/ID SVG dan data cadangan awal.
+Setelah snapshot Google Sheets sukses, record master menjadi sumber data:
+ruang terdaftar yang tidak memiliki record ditampilkan sebagai kosong. Jika
+sinkronisasi gagal, data terakhir yang berhasil diterapkan tetap dipakai.
 
 ### Struktur
 
@@ -139,7 +176,7 @@ Tambahkan satu objek di `buildings`, dengan `polygonId` yang sesuai dengan ID ge
 - [ ] Zoom dan geser peta
 - [ ] Penanda fasilitas (lift, toilet, tangga)
 - [ ] Lantai dan gedung lain
-- [ ] Sumber data eksternal (CSV atau spreadsheet)
+- [x] Sinkronisasi data Google Sheets (Apps Script, read-only)
 - [ ] Rute antar ruang
 
 ## Pengelola
