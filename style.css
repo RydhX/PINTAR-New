@@ -275,6 +275,10 @@ button { font: inherit; cursor: pointer; }
   color: #dc2626;
   background: #fef2f2;
 }
+.action-success .action-confirm-icon {
+  color: #16a34a;
+  background: #f0fdf4;
+}
 .action-confirm-icon svg {
   width: 26px;
   height: 26px;

@@ -1,6 +1,6 @@
 /* Sinkronisasi baca JSONP dan penulisan prototipe ke Google Sheets. */
 const SHEETS_CONFIG = Object.freeze({
-  endpointUrl: "https://script.google.com/macros/s/AKfycbw_KfUgZMjzoK_SdQZi2AvEmIS4kKFSr7JnP6_Xy8IsQAcg7Tb0OBjOnL9FP6GQjrB4pA/exec",
+  endpointUrl: "https://script.google.com/macros/s/AKfycbwUdUIAEPq7GHm7RE8EEqzWF0kTGnebWpbfdHmD8xqisYI44ueWR1RwChhMX-bJ9LLvOA/exec",
   intervalMs: 45_000,
   timeoutMs: 15_000,
   fields: Object.freeze({
@@ -33,9 +33,11 @@ const SheetsSync = (() => {
   let activeRequest = null;
   let generation = 0;
   let lastRecordsKey = null;
+  let latestSnapshot = null;
   let requestSequence = 0;
   let isWriting = false;
   let recordsHandler = null;
+  let statusHandler = null;
 
   function normalizeFloorKey(value) {
     const floor = String(value)
@@ -54,6 +56,76 @@ const SheetsSync = (() => {
       normalizeFloorKey(record.floor),
       String(record.room_id).trim(),
     ].join("\u0000");
+  }
+
+  function publishSnapshot(snapshot) {
+    const recordsKey = JSON.stringify(snapshot);
+    latestSnapshot = snapshot;
+    if (recordsKey !== lastRecordsKey) {
+      recordsHandler(snapshot.records, snapshot.diagnostics);
+      lastRecordsKey = recordsKey;
+    }
+  }
+
+  function publishOptimisticRecord(key, record) {
+    const records = latestSnapshot?.records || [];
+    const existingIndex = records.findIndex((item) => roomKey(item) === key);
+    const updatedRecords = [...records];
+    if (existingIndex === -1) updatedRecords.push(record);
+    else updatedRecords[existingIndex] = { ...updatedRecords[existingIndex], ...record };
+    publishSnapshot({
+      records: updatedRecords,
+      diagnostics: latestSnapshot?.diagnostics || [],
+    });
+  }
+
+  function publishOptimisticVacate(key, identity) {
+    const records = latestSnapshot?.records || [];
+    const existingIndex = records.findIndex((item) => roomKey(item) === key);
+    if (existingIndex === -1) return;
+    const clearedRecord = {
+      ...records[existingIndex],
+      ...identity,
+      occupancy_status: "vacant",
+      tenant: "",
+      payment_status: "",
+      installment_payments: "[]",
+      installments: [],
+    };
+    [
+      "area_m2",
+      "start_date",
+      "end_date",
+      "rent_per_month",
+      "outstanding_amount",
+      "contract_value",
+      "last_payment_date",
+      "electricity_kwh",
+      "water_m3",
+      "pic",
+      "contact",
+      "maintenance_status",
+      "complaint_status",
+      "notes",
+    ].forEach((field) => {
+      clearedRecord[field] = "";
+    });
+    const updatedRecords = [...records];
+    updatedRecords[existingIndex] = clearedRecord;
+    publishSnapshot({
+      records: updatedRecords,
+      diagnostics: latestSnapshot?.diagnostics || [],
+    });
+  }
+
+  async function reconcileAfterWriteFailure() {
+    try {
+      publishSnapshot(await requestRecords());
+      statusHandler?.("connected", "Terhubung", new Date());
+    } catch (error) {
+      console.error("Penyegaran ulang setelah penulisan gagal:", error);
+      statusHandler?.("error", "Gagal memperbarui");
+    }
   }
 
   function numericValue(value) {
@@ -263,14 +335,11 @@ const SheetsSync = (() => {
       const snapshot = await requestRecords();
       if (currentGeneration !== generation) return;
 
-      const recordsKey = JSON.stringify(snapshot);
-      if (recordsKey !== lastRecordsKey) {
-        onRecords(snapshot.records, snapshot.diagnostics);
-        lastRecordsKey = recordsKey;
-      }
+      publishSnapshot(snapshot);
       onStatus("connected", "Terhubung", new Date());
     } catch (error) {
       if (currentGeneration !== generation) return;
+      if (isWriting && error.message === "Permintaan sinkronisasi dibatalkan.") return;
       console.error("Sinkronisasi Google Sheets gagal:", error);
       onStatus("error", "Gagal memperbarui");
     }
@@ -282,7 +351,9 @@ const SheetsSync = (() => {
     intervalId = null;
     generation += 1;
     lastRecordsKey = null;
+    latestSnapshot = null;
     recordsHandler = onRecords;
+    statusHandler = onStatus;
 
     if (!SHEETS_CONFIG.endpointUrl.trim()) {
       onStatus("idle", "Endpoint belum dikonfigurasi");
@@ -342,47 +413,48 @@ const SheetsSync = (() => {
     const expected = normalizeRecords({ success: true, records: [record] }).records[0];
     const key = roomKey(expected);
     isWriting = true;
+    if (activeRequest) activeRequest();
     try {
       await sendMutation("update", record);
+      publishOptimisticRecord(key, expected);
 
-      const deadline = Date.now() + SHEETS_CONFIG.timeoutMs;
-      while (activeRequest && Date.now() < deadline) {
-        await new Promise((resolve) => window.setTimeout(resolve, 50));
-      }
-      if (activeRequest) {
-        throw new Error("Tidak dapat memverifikasi perubahan karena pembacaan data belum selesai.");
+      let snapshot;
+      let savedRecord;
+      let changedField;
+      for (let attempt = 0; attempt < 5; attempt += 1) {
+        snapshot = await requestRecords();
+        savedRecord = snapshot.records.find((item) => roomKey(item) === key);
+        changedField = savedRecord && Object.keys(record).find((field) => {
+          if (["building", "floor", "room_id"].includes(field)) return false;
+          if (
+            ["area_m2", "rent_per_month", "outstanding_amount", "contract_value", "electricity_kwh", "water_m3"]
+              .includes(field)
+          ) {
+            const actualNumber = numericValue(savedRecord[field]);
+            const expectedNumber = numericValue(expected[field]);
+            if (expectedNumber === 0 && actualNumber === null) return false;
+            return actualNumber !== expectedNumber;
+          }
+          return String(savedRecord[field] ?? "").trim() !== String(expected[field] ?? "").trim();
+        });
+        if (savedRecord && !changedField) break;
+        if (attempt < 4) {
+          await new Promise((resolve) => window.setTimeout(resolve, 500));
+        }
       }
 
-      const snapshot = await requestRecords();
-      const savedRecord = snapshot.records.find((item) => roomKey(item) === key);
       if (!savedRecord) {
         throw new Error("Perubahan belum terverifikasi. Pastikan Code.gs sudah diperbarui dan deployment Apps Script sudah memakai versi terbaru.");
       }
-
-      const changedField = Object.keys(record).find((field) => {
-        if (["building", "floor", "room_id"].includes(field)) return false;
-        if (
-          ["area_m2", "rent_per_month", "outstanding_amount", "contract_value", "electricity_kwh", "water_m3"]
-            .includes(field)
-        ) {
-          const actualNumber = numericValue(savedRecord[field]);
-          const expectedNumber = numericValue(expected[field]);
-          if (expectedNumber === 0 && actualNumber === null) return false;
-          return actualNumber !== expectedNumber;
-        }
-        return String(savedRecord[field] ?? "").trim() !== String(expected[field] ?? "").trim();
-      });
       if (changedField) {
         throw new Error(`Perubahan pada '${changedField}' belum terverifikasi. Periksa header kolom master dan deployment Apps Script.`);
       }
 
-      const recordsKey = JSON.stringify(snapshot);
-      if (recordsKey !== lastRecordsKey) {
-        recordsHandler(snapshot.records, snapshot.diagnostics);
-        lastRecordsKey = recordsKey;
-      }
+      publishSnapshot(snapshot);
+      statusHandler?.("connected", "Terhubung", new Date());
       return true;
     } catch (error) {
+      await reconcileAfterWriteFailure();
       if (error instanceof TypeError) {
         throw new Error("Tidak dapat memastikan hasil penulisan. Periksa koneksi, Apps Script, dan spreadsheet.");
       }
@@ -402,41 +474,56 @@ const SheetsSync = (() => {
     }] }).records[0];
     const key = roomKey(normalized);
     isWriting = true;
+    if (activeRequest) activeRequest();
     try {
       await sendMutation("vacate", identity);
+      publishOptimisticVacate(key, identity);
 
-      const deadline = Date.now() + SHEETS_CONFIG.timeoutMs;
-      while (activeRequest && Date.now() < deadline) {
-        await new Promise((resolve) => window.setTimeout(resolve, 50));
-      }
-      if (activeRequest) {
-        throw new Error("Tidak dapat memverifikasi penghapusan karena pembacaan data belum selesai.");
+      let snapshot;
+      let clearedRecord;
+      let unclearedField;
+      for (let attempt = 0; attempt < 5; attempt += 1) {
+        snapshot = await requestRecords();
+        clearedRecord = snapshot.records.find((item) => roomKey(item) === key);
+        unclearedField = clearedRecord && [
+          "tenant",
+          "payment_status",
+          "area_m2",
+          "start_date",
+          "end_date",
+          "rent_per_month",
+          "outstanding_amount",
+          "contract_value",
+          "installment_payments",
+          "last_payment_date",
+          "electricity_kwh",
+          "water_m3",
+          "pic",
+          "contact",
+          "maintenance_status",
+          "complaint_status",
+          "notes",
+        ].find((field) => {
+          const value = String(clearedRecord[field] ?? "").trim();
+          if (!value) return false;
+          if (field === "installment_payments" && value === "[]") return false;
+          return true;
+        });
+        if (
+          clearedRecord &&
+          clearedRecord.occupancy_status === "vacant" &&
+          !unclearedField
+        ) {
+          break;
+        }
+        if (attempt < 4) {
+          await new Promise((resolve) => window.setTimeout(resolve, 500));
+        }
       }
 
-      const snapshot = await requestRecords();
-      const clearedRecord = snapshot.records.find((item) => roomKey(item) === key);
       if (!clearedRecord) {
         throw new Error("Identitas unit tidak ditemukan setelah pengosongan. Pastikan Code.gs sudah diperbarui dan deployment memakai versi terbaru.");
       }
-      const unclearedField = [
-        "tenant",
-        "payment_status",
-        "area_m2",
-        "start_date",
-        "end_date",
-        "rent_per_month",
-        "outstanding_amount",
-        "contract_value",
-        "installment_payments",
-        "last_payment_date",
-        "electricity_kwh",
-        "water_m3",
-        "pic",
-        "contact",
-        "maintenance_status",
-        "complaint_status",
-        "notes",
-      ].find((field) => String(clearedRecord[field] ?? "").trim() !== "");
       if (clearedRecord.occupancy_status !== "vacant" || unclearedField) {
         throw new Error(
           unclearedField
@@ -445,13 +532,11 @@ const SheetsSync = (() => {
         );
       }
 
-      const recordsKey = JSON.stringify(snapshot);
-      if (recordsKey !== lastRecordsKey) {
-        recordsHandler(snapshot.records, snapshot.diagnostics);
-        lastRecordsKey = recordsKey;
-      }
+      publishSnapshot(snapshot);
+      statusHandler?.("connected", "Terhubung", new Date());
       return true;
     } catch (error) {
+      await reconcileAfterWriteFailure();
       if (error instanceof TypeError) {
         throw new Error("Tidak dapat memastikan pengosongan data. Periksa koneksi, Apps Script, dan spreadsheet.");
       }

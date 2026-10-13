@@ -175,29 +175,35 @@ const MapView = (() => {
     }
 
     const plan = findPlan(planId, prefix, rooms);
-    const content = [...svg.querySelectorAll("[id]")].filter((el) =>
-      el.id.startsWith(prefix),
-    );
-    rooms.forEach((room) => content.includes(room) || content.push(room));
-    const contentBox = unionBox(content.map(bboxInRoot));
     const planBox = plan ? bboxInRoot(plan) : null;
-    const planArea = planBox ? planBox.width * planBox.height : 0;
-    const contentArea = contentBox ? contentBox.width * contentBox.height : 0;
     const isExplicitPlan = Boolean(planId && plan?.id === planId);
-    const usePlanBox =
-      planBox && (isExplicitPlan || !contentBox || planArea <= contentArea * 2.5);
     let target = null;
 
-    if (usePlanBox) {
+    if (planBox && isExplicitPlan) {
       markBasemap(plan);
       target = planBox;
     } else {
-      target = contentBox;
-      if (!plan) {
-        console.warn(
-          "Akar denah tidak ditemukan, basemap tidak ditandai. " +
-            "Bungkus denah dalam satu <g> lalu isi planId di data.js.",
-        );
+      const content = [...svg.querySelectorAll("[id]")].filter((el) =>
+        el.id.startsWith(prefix),
+      );
+      rooms.forEach((room) => content.includes(room) || content.push(room));
+      const contentBox = unionBox(content.map(bboxInRoot));
+      const planArea = planBox ? planBox.width * planBox.height : 0;
+      const contentArea = contentBox ? contentBox.width * contentBox.height : 0;
+      const usePlanBox =
+        planBox && (!contentBox || planArea <= contentArea * 2.5);
+
+      if (usePlanBox) {
+        markBasemap(plan);
+        target = planBox;
+      } else {
+        target = contentBox;
+        if (!plan) {
+          console.warn(
+            "Akar denah tidak ditemukan, basemap tidak ditandai. " +
+              "Bungkus denah dalam satu <g> lalu isi planId di data.js.",
+          );
+        }
       }
     }
     target ??= unionBox(rooms.map(bboxInRoot));

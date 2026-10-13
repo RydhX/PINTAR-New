@@ -55,9 +55,22 @@ const actionConfirmTitle = document.getElementById("actionConfirmTitle");
 const actionConfirmMessage = document.getElementById("actionConfirmMessage");
 const actionConfirmCancel = document.getElementById("actionConfirmCancel");
 const actionConfirmAccept = document.getElementById("actionConfirmAccept");
+const actionSuccessDialog = document.getElementById("actionSuccess");
+const actionSuccessTitle = document.getElementById("actionSuccessTitle");
+const actionSuccessMessage = document.getElementById("actionSuccessMessage");
+const actionSuccessClose = document.getElementById("actionSuccessClose");
 let selectedRoomId = null;
 let editorRoomId = null;
 let resolveActionConfirmation = null;
+
+function showActionSuccess(title, message) {
+  actionSuccessTitle.textContent = title;
+  actionSuccessMessage.textContent = message;
+  actionSuccessDialog.showModal();
+  actionSuccessClose.focus();
+}
+
+actionSuccessClose.addEventListener("click", () => actionSuccessDialog.close());
 
 /* ---------- STATUS (warna ditentukan di satu tempat) ---------- */
 const STATUS = {
@@ -88,8 +101,8 @@ const BUILDING_OPTIONS = [
 ];
 
 const FLOOR_OPTIONS = [
-  { id: "DASAR", label: "Lantai Dasar" },
-  ...Array.from({ length: 9 }, (_, index) => {
+  { id: "L1", label: "Lantai 1 (Dasar)" },
+  ...Array.from({ length: 10 }, (_, index) => {
     const level = index + 2;
     return { id: `L${level}`, label: `Lantai ${level}` };
   }),
@@ -133,7 +146,10 @@ statusEl.innerHTML =
     .join("") +
   '<option value="overdue">Tunggakan pembayaran</option>';
 
-searchEl.addEventListener("input", applyFilter);
+searchEl.addEventListener("input", () => {
+  clearTimeout(searchEl._debounceTimer);
+  searchEl._debounceTimer = setTimeout(applyFilter, 150);
+});
 statusEl.addEventListener("change", applyFilter);
 buildingSelectEl.addEventListener("change", () => {
   const buildingOption = BUILDING_OPTIONS.find(
@@ -405,6 +421,11 @@ function findById(id) {
   return mapEl.querySelector("#" + CSS.escape(id));
 }
 
+/* Dapatkan SVG element ID dari room object (support svgId mapping untuk L4-L10 pakai L3 SVG) */
+function getSvgId(room, logicalId) {
+  return room.svgId || logicalId;
+}
+
 const fmtRupiah = (n) =>
   typeof n === "number" ? "Rp " + n.toLocaleString("id-ID") : "-";
 
@@ -429,6 +450,7 @@ function remainingText(end) {
 }
 
 /* ---------- MUAT SVG (cache + deteksi encoding) ---------- */
+// Cache menyimpan parsed SVGDocument (cloneable), bukan string
 const svgCache = new Map();
 
 async function loadSVG(file) {
@@ -449,9 +471,16 @@ async function loadSVG(file) {
     const text = new TextDecoder(enc)
       .decode(buf)
       .replace(/<\?xml[^>]*\?>|<!DOCTYPE[^>]*>/g, "");
-    svgCache.set(file, text);
+    
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(text, "image/svg+xml");
+    const svg = doc.documentElement;
+    // Simpan clone asli untuk di-clone nanti
+    svgCache.set(file, svg.cloneNode(true));
   }
-  mapEl.innerHTML = svgCache.get(file);
+  // Clone dari cache dan inject ke DOM (lebih cepat dari innerHTML + parse)
+  mapEl.innerHTML = "";
+  mapEl.appendChild(svgCache.get(file).cloneNode(true));
 }
 
 /* ---------- RENDER (satu pintu) ---------- */
@@ -545,12 +574,12 @@ function showUnavailablePlan() {
     </div>`;
 }
 
-function markZones(floorId) {
+function markZones(svgPrefix) {
   const svg = mapEl.querySelector("svg");
   if (!svg) return;
 
   svg.querySelectorAll("[id]").forEach((node) => {
-    if (node.id.startsWith(`${floorId}_`)) {
+    if (node.id.startsWith(svgPrefix)) {
       node.classList.add("zone");
     }
   });
@@ -558,14 +587,33 @@ function markZones(floorId) {
 
 function buildRegistry(rooms = {}) {
   registry.clear();
+  const index = { 
+    el: new Map(), 
+    labelEl: new Map(), 
+    listEl: new Map() 
+  };
+  
   Object.entries(rooms).forEach(([roomId, room]) => {
-    registry.set(roomId, { room, el: findById(roomId) });
+    const svgId = getSvgId(room, roomId);
+    const el = findById(svgId);
+    registry.set(roomId, { room, el });
+    if (el) index.el.set(roomId, el);
+    
+    const label = mapEl.querySelector(`.room-label[data-room-id="${CSS.escape(roomId)}"]`);
+    if (label) index.labelEl.set(roomId, label);
+    
+    const listItem = unitListEl.querySelector(`[data-id="${CSS.escape(roomId)}"]`);
+    if (listItem) index.listEl.set(roomId, listItem);
   });
+  
+  registry.index = index; // simpan index untuk applyFilter
   return registry;
 }
 
 function checkSvgAgainstData(rooms = {}) {
-  const missing = Object.keys(rooms).filter((roomId) => !findById(roomId));
+  const missing = Object.entries(rooms)
+    .filter(([roomId, room]) => !findById(getSvgId(room, roomId)))
+    .map(([roomId]) => roomId);
   if (missing.length) {
     console.warn("Ruang tidak ada di SVG:", missing);
   }
@@ -703,9 +751,10 @@ async function showFloorPlan() {
   await loadSVG(f.svg);
 
   Object.entries(f.rooms).forEach(([roomId, room]) => {
-    const el = findById(roomId);
+    const svgId = getSvgId(room, roomId);
+    const el = findById(svgId);
     if (!el) {
-      console.warn("Ruang tidak ada di SVG:", roomId);
+      console.warn("Ruang tidak ada di SVG:", roomId, "(svgId:", svgId, ")");
       return;
     }
     el.classList.add("clickable", "room");
@@ -716,7 +765,7 @@ async function showFloorPlan() {
     el.addEventListener("click", () => selectRoom(roomId));
   });
 
-  markZones(f.id);
+  markZones(f.svgPrefix || f.id + "_");
   buildRegistry(f.rooms);
   checkSvgAgainstData(f.rooms);
   addLabels(f.rooms);
@@ -730,7 +779,7 @@ async function showFloorPlan() {
 
   MapView.attach(svg, {
     planId: f.planId,
-    prefix: f.id + "_",
+    prefix: f.svgPrefix || f.id + "_",
     rooms: [...registry.values()].map((entry) => entry.el).filter(Boolean),
   });
 }
@@ -809,25 +858,25 @@ actionConfirmDialog.addEventListener("close", () => {
 /* ---------- PENCARIAN & FILTER ---------- */
 function applyFilter() {
   const floor = getFloor();
-  if (!floor) return;
+  if (!floor || !registry.index) return;
 
   const q = searchEl.value.trim().toLowerCase();
   const wanted = statusEl.value;
+  const { el, labelEl, listEl } = registry.index;
 
-  Object.entries(floor.rooms).forEach(([roomId, room]) => {
-    const occupancy = statusOf(room);
-    const match =
-      (wanted === "all" ||
+  // Gunakan requestAnimationFrame untuk batch DOM updates
+  requestAnimationFrame(() => {
+    Object.entries(floor.rooms).forEach(([roomId, room]) => {
+      const occupancy = statusOf(room);
+      const match = (wanted === "all" || 
         (wanted === "overdue" ? isUnpaid(room) : wanted === occupancy)) &&
-      (roomId + " " + (room.tenant || "")).toLowerCase().includes(q);
+        (roomId + " " + (room.tenant || "")).toLowerCase().includes(q);
 
-    unitListEl
-      .querySelector(`[data-id="${CSS.escape(roomId)}"]`)
-      ?.toggleAttribute("hidden", !match);
-    findById(roomId)?.classList.toggle("dimmed", !match);
-    mapEl
-      .querySelector(`.room-label[data-room-id="${CSS.escape(roomId)}"]`)
-      ?.classList.toggle("dimmed", !match);
+      const hide = !match;
+      listEl.get(roomId)?.toggleAttribute("hidden", hide);
+      el.get(roomId)?.classList.toggle("dimmed", hide);
+      labelEl.get(roomId)?.classList.toggle("dimmed", hide);
+    });
   });
 }
 
@@ -838,8 +887,19 @@ function addLabels(rooms = {}) {
 
   const FONT = 26;
 
+  // 1. Hapus label lama pakai DocumentFragment (batch remove)
+  const oldLabels = svg.querySelectorAll(".room-label");
+  if (oldLabels.length) {
+    const frag = document.createDocumentFragment();
+    oldLabels.forEach(l => frag.appendChild(l));
+  }
+
+  // 2. Kumpulkan SEMUA label baru dalam DocumentFragment (batch insert)
+  const frag = document.createDocumentFragment();
+
   Object.entries(rooms).forEach(([roomId, room]) => {
-    const el = findById(roomId);
+    const svgId = getSvgId(room, roomId);
+    const el = findById(svgId);
     if (!el) return;
     const occupancy = statusOf(room);
     if (!occupancy || occupancy === "vacant") return;
@@ -880,8 +940,11 @@ function addLabels(rooms = {}) {
       t.appendChild(span);
     });
 
-    svg.appendChild(t);
+    frag.appendChild(t); // Masuk ke fragment, BELUM ke DOM
   });
+
+  // 3. Single reflow: insert SEMUA label sekaligus
+  svg.appendChild(frag);
 }
 
 /* ---------- TAHAP 4: DETAIL RUANG ---------- */
@@ -1293,6 +1356,10 @@ roomEditor.addEventListener("submit", async (event) => {
     await SheetsSync.saveRecord(record);
     roomEditor.hidden = true;
     editorStatusEl.textContent = "Perubahan tersimpan dan terverifikasi.";
+    showActionSuccess(
+      "Berhasil disimpan",
+      "Perubahan data unit berhasil disimpan dan diverifikasi di spreadsheet.",
+    );
   } catch (error) {
     console.error("Penyimpanan data unit gagal:", error);
     editorStatusEl.textContent = error.message || "Perubahan gagal disimpan.";
@@ -1328,6 +1395,10 @@ async function clearRoomRecord(roomId) {
     });
     roomEditor.hidden = true;
     editorStatusEl.textContent = "Data tenant dikosongkan. Identitas unit tetap tersimpan.";
+    showActionSuccess(
+      "Berhasil dihapus",
+      "Data tenant berhasil dikosongkan. Identitas unit tetap tersimpan di spreadsheet.",
+    );
   } catch (error) {
     console.error("Pengosongan data tenant gagal:", error);
     editorStatusEl.textContent = error.message || "Data unit gagal dikosongkan.";
