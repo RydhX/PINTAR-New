@@ -16,12 +16,13 @@ const MapView = (() => {
   const SKIP = "defs,style,title,desc,metadata,script";
 
   let host = null; // elemen #map
-  let controls = null; // tombol + - ⌂
   let svg = null;
   let vb = null; // viewBox aktif {x,y,w,h}
   let home = null; // viewBox fokus gedung
   let full = null; // viewBox peta penuh
   let drag = null;
+  let pinch = null;
+  const touchPointers = new Map();
   let suppressClick = false;
 
   const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
@@ -29,22 +30,6 @@ const MapView = (() => {
   /* ---------- Inisialisasi (sekali) ---------- */
   function init(hostEl) {
     host = hostEl;
-
-    controls = document.createElement("div");
-    controls.className = "map-controls";
-    controls.hidden = true;
-    controls.innerHTML =
-      '<button type="button" data-act="in" aria-label="Perbesar">+</button>' +
-      '<button type="button" data-act="out" aria-label="Perkecil">−</button>' +
-      '<button type="button" data-act="home" aria-label="Fokus ke gedung">⌂</button>';
-    host.parentNode.appendChild(controls);
-
-    controls.addEventListener("click", (e) => {
-      const act = e.target.closest("button")?.dataset.act;
-      if (act === "in") zoomAt(0.7);
-      else if (act === "out") zoomAt(1 / 0.7);
-      else if (act === "home") reset();
-    });
 
     host.addEventListener("wheel", onWheel, { passive: false });
     host.addEventListener("pointerdown", onDown);
@@ -210,13 +195,13 @@ const MapView = (() => {
 
     home = target ? homeBox(target) : { ...full };
     reset();
-    controls.hidden = false;
   }
 
   function detach() {
     svg = null;
     drag = null;
-    if (controls) controls.hidden = true;
+    pinch = null;
+    touchPointers.clear();
     host?.classList.remove("dragging");
   }
 
@@ -246,11 +231,31 @@ const MapView = (() => {
   }
 
   function onDown(e) {
-    if (!svg || e.button !== 0 || !svg.contains(e.target)) return;
+    if (!svg || !svg.contains(e.target)) return;
+    if (e.pointerType === "touch") {
+      touchPointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      if (touchPointers.size === 1) {
+        drag = { id: e.pointerId, x: e.clientX, y: e.clientY, active: false };
+      }
+      if (touchPointers.size === 2) {
+        drag = null;
+        host.classList.remove("dragging");
+        startPinch();
+      }
+      return;
+    }
+    if (e.button !== 0) return;
     drag = { id: e.pointerId, x: e.clientX, y: e.clientY, active: false };
   }
 
   function onMove(e) {
+    if (e.pointerType === "touch" && touchPointers.has(e.pointerId)) {
+      touchPointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      if (pinch && touchPointers.size >= 2) {
+        updatePinch();
+        return;
+      }
+    }
     if (!drag || e.pointerId !== drag.id) return;
     const dx = e.clientX - drag.x;
     const dy = e.clientY - drag.y;
@@ -269,6 +274,24 @@ const MapView = (() => {
   }
 
   function onUp(e) {
+    if (touchPointers.has(e.pointerId)) {
+      touchPointers.delete(e.pointerId);
+      if (pinch) {
+        pinch = null;
+        const remaining = [...touchPointers.entries()][0];
+        drag = remaining
+          ? {
+              id: remaining[0],
+              x: remaining[1].x,
+              y: remaining[1].y,
+              active: false,
+            }
+          : null;
+        suppressClick = true;
+        setTimeout(() => (suppressClick = false), 0);
+        return;
+      }
+    }
     if (!drag || e.pointerId !== drag.id) return;
     if (drag.active) {
       suppressClick = true; // cegah klik "ikutan" setelah menggeser
@@ -276,6 +299,47 @@ const MapView = (() => {
       host.classList.remove("dragging");
     }
     drag = null;
+  }
+
+  function startPinch() {
+    const [first, second] = [...touchPointers.values()];
+    const rect = svg.getBoundingClientRect();
+    const dx = second.x - first.x;
+    const dy = second.y - first.y;
+    pinch = {
+      distance: Math.hypot(dx, dy),
+      center: { x: (first.x + second.x) / 2, y: (first.y + second.y) / 2 },
+      rect,
+      viewBox: { ...vb },
+    };
+  }
+
+  function updatePinch() {
+    const [first, second] = [...touchPointers.values()];
+    const dx = second.x - first.x;
+    const dy = second.y - first.y;
+    const distance = Math.hypot(dx, dy);
+    if (!distance || !pinch.distance) return;
+
+    const center = { x: (first.x + second.x) / 2, y: (first.y + second.y) / 2 };
+    const scale = clamp(pinch.distance / distance, MIN_SCALE, MAX_SCALE);
+    const width = clamp(
+      pinch.viewBox.w * scale,
+      full.w * MIN_SCALE,
+      full.w * MAX_SCALE,
+    );
+    const ratio = width / pinch.viewBox.w;
+    const height = pinch.viewBox.h * ratio;
+    const anchorX =
+      pinch.viewBox.x +
+      ((pinch.center.x - pinch.rect.left) / pinch.rect.width) * pinch.viewBox.w;
+    const anchorY =
+      pinch.viewBox.y +
+      ((pinch.center.y - pinch.rect.top) / pinch.rect.height) * pinch.viewBox.h;
+    const x = anchorX - ((center.x - pinch.rect.left) / pinch.rect.width) * width;
+    const y = anchorY - ((center.y - pinch.rect.top) / pinch.rect.height) * height;
+
+    setVB(x, y, width, height);
   }
 
   function onClickCapture(e) {

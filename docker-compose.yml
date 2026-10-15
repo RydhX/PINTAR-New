@@ -1,0 +1,38 @@
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: pintar
+      POSTGRES_USER: pintar
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-pintar_dev}
+    ports:
+      - "127.0.0.1:5433:5432"
+    volumes:
+      - pintar_postgres_data:/var/lib/postgresql/data
+      - ./server/schema.sql:/docker-entrypoint-initdb.d/001-schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pintar -d pintar"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  app:
+    build: .
+    restart: unless-stopped
+    environment:
+      PORT: 3000
+      PGHOST: db
+      PGPORT: 5432
+      PGUSER: pintar
+      PGPASSWORD: ${POSTGRES_PASSWORD:-pintar_dev}
+      PGDATABASE: pintar
+      NODE_ENV: production
+    ports:
+      - "127.0.0.1:3000:3000"
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  pintar_postgres_data:

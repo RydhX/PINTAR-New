@@ -9,9 +9,12 @@ const SVG_NS = "http://www.w3.org/2000/svg";
 /* ---------- STATE ---------- */
 const state = {
   view: "area", // "area" | "plan" | "unavailable"
+  currentView: "map", // "map" | "data" | "client"
   buildingId: null,
   floorId: null,
   floorPickerOpen: false,
+  sidebarOpen: false,
+  mapControlsOpen: false,
 };
 
 let renderToken = 0;
@@ -21,12 +24,19 @@ let selectedBasemapId = "imagery";
 
 /* ---------- ELEMEN HTML ---------- */
 const mapEl = document.getElementById("map");
+const sidebarContentEl = document.getElementById("sidebarContent");
 const titleEl = document.getElementById("title");
 const backBtn = document.getElementById("backBtn");
 const floorPickerEl = document.getElementById("floorPicker");
 const floorPickerTitleEl = document.getElementById("floorPickerTitle");
 const detailEl = document.getElementById("detail");
 const sidebarEl = document.getElementById("sidebar");
+const openSidebarBtn = document.getElementById("openSidebar");
+const sidebarMapControlsEl = document.getElementById("sidebarMapControls");
+const mapControlsSidebarEl = document.getElementById("mapControlsSidebar");
+const openMapControlsBtn = document.getElementById("openMapControls");
+const closeMapControlsBtn = document.getElementById("closeMapControls");
+const workspaceLayoutEl = document.getElementById("workspaceLayout");
 const summaryEl = document.getElementById("summary");
 const unitListEl = document.getElementById("unitList");
 const searchEl = document.getElementById("search");
@@ -40,16 +50,26 @@ const updateTimeEl = document.getElementById("updateTime");
 const footerUpdateTimeEl = document.getElementById("footerUpdateTime");
 const editRoomBtn = document.getElementById("editRoomBtn");
 const roomEditor = document.getElementById("roomEditor");
+const roomEditorDialog = document.getElementById("roomEditorDialog");
+const closeRoomEditorDialogBtn = document.getElementById("closeRoomEditorDialog");
+const roomEditorFormHost = document.getElementById("roomEditorFormHost");
 const editorStatusEl = document.getElementById("editorStatus");
 const clearTenantBtn = document.getElementById("clearTenantBtn");
+const contractRoomListEl = document.getElementById("contractRoomList");
 const installmentEditorEl = document.getElementById("installmentEditor");
 const installmentListEl = document.getElementById("installmentList");
 const installmentPaidTotalEl = document.getElementById("installmentPaidTotal");
 const installmentRemainingEl = document.getElementById("installmentRemaining");
+const partialPaymentEditorEl = document.getElementById("partialPaymentEditor");
+const billingPeriodLabelEl = document.getElementById("billingPeriodLabel");
+const initialPaymentInput = roomEditor.elements.namedItem("initial_payment_amount");
+const partialPaymentScheduleInput = roomEditor.elements.namedItem("partial_payment_schedule");
+const partialPaymentRemainingEl = document.getElementById("partialPaymentRemaining");
 const contractValueInput = roomEditor.elements.namedItem("contract_value");
-const outstandingInput = roomEditor.elements.namedItem("outstanding_amount");
-const outstandingLabel = outstandingInput.closest("label");
 const paymentStatusInput = roomEditor.elements.namedItem("payment_status");
+const installmentIntervalInput = roomEditor.elements.namedItem("installment_interval_months");
+const startDateInput = roomEditor.elements.namedItem("start_date");
+const endDateInput = roomEditor.elements.namedItem("end_date");
 const actionConfirmDialog = document.getElementById("actionConfirm");
 const actionConfirmTitle = document.getElementById("actionConfirmTitle");
 const actionConfirmMessage = document.getElementById("actionConfirmMessage");
@@ -59,9 +79,29 @@ const actionSuccessDialog = document.getElementById("actionSuccess");
 const actionSuccessTitle = document.getElementById("actionSuccessTitle");
 const actionSuccessMessage = document.getElementById("actionSuccessMessage");
 const actionSuccessClose = document.getElementById("actionSuccessClose");
+const registerTenantBtn = document.getElementById("registerTenantBtn");
+const userAvatarEl = document.getElementById("userAvatar");
+const userLabelEl = document.getElementById("userLabel");
+const mapLayoutEl = document.getElementById("mapLayout");
+const tenantTableViewEl = document.getElementById("tenantTableView");
+const clientPortalViewEl = document.getElementById("clientPortalView");
+const invoicePageEl = document.getElementById("invoicePage");
+const showMapViewBtn = document.getElementById("showMapView");
+const showTenantTableBtn = document.getElementById("showTenantTable");
+const showClientDataBtn = document.getElementById("showClientData");
+const newTenantDialog = document.getElementById("newTenantDialog");
+const closeNewTenantDialogBtn = document.getElementById("closeNewTenantDialog");
+const newTenantFormHost = document.getElementById("newTenantFormHost");
+const registrationBuildingEl = document.getElementById("registrationBuilding");
+const registrationFloorEl = document.getElementById("registrationFloor");
+const registrationRoomEl = document.getElementById("registrationRoom");
+const toastEl = document.getElementById("toast");
 let selectedRoomId = null;
 let editorRoomId = null;
+let registrationContext = null;
+let toastTimer = null;
 let resolveActionConfirmation = null;
+let activeRoomPopup = null;
 
 function showActionSuccess(title, message) {
   actionSuccessTitle.textContent = title;
@@ -72,10 +112,31 @@ function showActionSuccess(title, message) {
 
 actionSuccessClose.addEventListener("click", () => actionSuccessDialog.close());
 
+function applyRole(user) {
+  const isAdmin = user.role === "admin";
+  const isClient = user.role === "client";
+  if (window.matchMedia("(max-width: 900px)").matches) {
+    state.sidebarOpen = false;
+  }
+  registerTenantBtn.hidden = !isAdmin;
+  showTenantTableBtn.hidden = isClient;
+  showClientDataBtn.hidden = !isClient;
+  editRoomBtn.hidden = !isAdmin;
+  clearTenantBtn.hidden = true;
+  userAvatarEl.textContent = user.displayName.slice(0, 1).toLocaleUpperCase("id-ID");
+  userLabelEl.textContent = `${user.displayName} · ${user.role}`;
+  workspaceLayoutEl.hidden = false;
+  clientPortalViewEl.hidden = true;
+  invoicePageEl.hidden = true;
+  tenantTableViewEl.hidden = true;
+  mapLayoutEl.hidden = false;
+  setCurrentView("map");
+}
+
 /* ---------- STATUS (warna ditentukan di satu tempat) ---------- */
 const STATUS = {
   occupied: { label: "Terisi", color: "#22c55e" },
-  vacant: { label: "Kosong", color: "#ef4444" },
+  vacant: { label: "Kosong", color: "#3b82f6" },
   in_progress: { label: "Dalam Proses", color: "#f59e0b" },
 };
 
@@ -102,11 +163,8 @@ const BUILDING_OPTIONS = [
 
 const FLOOR_OPTIONS = [
   { id: "L1", label: "Lantai 1 (Dasar)" },
-  ...Array.from({ length: 10 }, (_, index) => {
-    const level = index + 2;
-    return { id: `L${level}`, label: `Lantai ${level}` };
-  }),
-  { id: "ROOFTOP", label: "Rooftop" },
+  { id: "L2", label: "Lantai 2" },
+  { id: "L3", label: "Lantai 3" },
 ];
 
 const BASEMAP_OPTIONS = {
@@ -129,14 +187,111 @@ function statusOf(room) {
   const status = String(room.status || "").trim().toLocaleLowerCase("id-ID");
   if (["aktif", "terisi", "occupied"].includes(status)) return "occupied";
   if (["kosong", "tersedia", "vacant"].includes(status)) return "vacant";
-  if (["dalam proses", "in_progress"].includes(status)) return "in_progress";
+  if (["dalam proses", "in_progress", "maintenance", "pemeliharaan"].includes(status)) {
+    return "in_progress";
+  }
   return null;
+}
+
+function isMaintenance(room) {
+  return statusOf(room) === "in_progress";
+}
+
+function hasTenantData(room) {
+  const tenant = String(room?.tenant || "").trim();
+  return (
+    statusOf(room) !== "vacant" &&
+    tenant !== "" &&
+    tenant !== "-" &&
+    tenant.toLocaleLowerCase("id-ID") !== "tersedia"
+  );
+}
+
+function showToast(message) {
+  toastEl.textContent = message;
+  toastEl.hidden = false;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => {
+    toastEl.hidden = true;
+  }, 3500);
 }
 
 function isUnpaid(room) {
   const payment = String(room.payment || "").trim().toLocaleLowerCase("id-ID");
-  if (payment === "termin") return Number(room.outstandingAmount) > 0;
-  return ["belum bayar", "belum dibayar", "unpaid", "overdue"].includes(payment);
+  const balance = paymentBalance(room);
+  if (balance !== null) return balance > 0;
+  return ["belum bayar", "belum dibayar", "unpaid", "overdue", "termin", "partial paid", "partial", "sebagian"].includes(payment);
+}
+
+function isPaid(room) {
+  const payment = String(room.payment || "").trim().toLocaleLowerCase("id-ID");
+  const balance = paymentBalance(room);
+  return (
+    (payment === "lunas" && (balance === null || balance === 0)) ||
+    (["termin", "partial paid", "partial", "sebagian"].includes(payment) && balance === 0)
+  );
+}
+
+function numericAmount(value) {
+  if (value === undefined || value === null || String(value).trim() === "") return null;
+  const amount = Number(value);
+  return Number.isFinite(amount) ? amount : null;
+}
+
+function paymentBalance(room) {
+  const payment = String(room.payment || "").trim().toLocaleLowerCase("id-ID");
+  const legacyBalance = numericAmount(room.legacyOutstandingAmount);
+  if (payment === "lunas") return 0;
+
+  const contractValue = numericAmount(room.contractValue);
+  if (contractValue !== null) {
+    if (payment === "termin") {
+      const paid = (room.installments || []).reduce(
+        (total, installment) => total + (numericAmount(installment.amount) || 0),
+        0,
+      );
+      return Math.max(contractValue - paid, 0);
+    }
+    if (["partial paid", "partial", "sebagian"].includes(payment)) {
+      const initialPayment = numericAmount(room.initialPaymentAmount);
+      if (initialPayment !== null) return Math.max(contractValue - initialPayment, 0);
+    }
+  }
+  return legacyBalance;
+}
+
+function roomColor(room) {
+  const occupancy = statusOf(room);
+  if (occupancy === "vacant") return "#808080";
+  if (isMaintenance(room)) return "#ef4444";
+  if (isUnpaid(room)) return "#eab308";
+  if (occupancy === "occupied" && isPaid(room)) return "#22c55e";
+  return "#94a3b8";
+}
+
+function roomStatusLabel(room) {
+  if (statusOf(room) === "vacant") return STATUS.vacant.label;
+  if (isMaintenance(room)) return "Maintenance";
+  if (isUnpaid(room)) return "Tunggakan";
+  if (isPaid(room)) return "Lunas";
+  const occupancy = statusOf(room);
+  return occupancy ? STATUS[occupancy].label : "Status tidak dikenal";
+}
+
+function roomLabelText(roomId, room) {
+  const occupancy = statusOf(room);
+  if (occupancy === "vacant") return "Kosong";
+  if (isMaintenance(room)) return "Maintenance";
+
+  const user = Auth.currentUser;
+  const canViewTenant = user?.role !== "client" || room.tenant === user.tenantName;
+  if (occupancy === "occupied" && hasTenantData(room) && canViewTenant) {
+    return room.tenant;
+  }
+  if (occupancy === "occupied" && user?.role === "client" && !canViewTenant) {
+    return "Terisi";
+  }
+  return occupancy === "occupied" ? roomStatusLabel(room) : roomId;
 }
 
 statusEl.innerHTML =
@@ -144,13 +299,46 @@ statusEl.innerHTML =
   Object.entries(STATUS)
     .map(([k, s]) => `<option value="${k}">${s.label}</option>`)
     .join("") +
-  '<option value="overdue">Tunggakan pembayaran</option>';
+  '<option value="paid">Terisi lunas</option>' +
+  '<option value="overdue">Tunggakan pembayaran</option>' +
+  '<option value="maintenance">Maintenance</option>';
 
 searchEl.addEventListener("input", () => {
   clearTimeout(searchEl._debounceTimer);
   searchEl._debounceTimer = setTimeout(applyFilter, 150);
 });
 statusEl.addEventListener("change", applyFilter);
+function setActiveTab(tab) {
+  const group = tab?.closest("[data-tabs]");
+  if (!group) return;
+  group.querySelectorAll('[role="tab"]').forEach((item) => {
+    const selected = item === tab;
+    item.setAttribute("aria-selected", String(selected));
+    item.tabIndex = selected ? 0 : -1;
+    document.getElementById(item.getAttribute("aria-controls")).hidden = !selected;
+  });
+}
+
+document.querySelectorAll("[data-tabs]").forEach((group) => {
+  group.addEventListener("click", (event) => {
+    const tab = event.target.closest('[role="tab"]');
+    if (tab && group.contains(tab)) setActiveTab(tab);
+  });
+  group.addEventListener("keydown", (event) => {
+    const current = event.target.closest('[role="tab"]');
+    if (!current || !["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+    const tabs = [...group.querySelectorAll('[role="tab"]')];
+    const index = tabs.indexOf(current);
+    const nextIndex = event.key === "Home"
+      ? 0
+      : event.key === "End"
+        ? tabs.length - 1
+        : (index + (event.key === "ArrowRight" ? 1 : tabs.length - 1)) % tabs.length;
+    event.preventDefault();
+    tabs[nextIndex].focus();
+    setActiveTab(tabs[nextIndex]);
+  });
+});
 buildingSelectEl.addEventListener("change", () => {
   const buildingOption = BUILDING_OPTIONS.find(
     (item) => item.id === buildingSelectEl.value,
@@ -194,45 +382,112 @@ function prepareData() {
 }
 
 function updateDashboard() {
-  const configuredBuildings = DATA.buildings;
-  const rooms = configuredBuildings.flatMap((building) =>
+  const selectedBuilding = DATA.buildings.find(
+    (building) => building.id === state.buildingId,
+  );
+  const buildings = selectedBuilding ? [selectedBuilding] : DATA.buildings;
+  const rooms = buildings.flatMap((building) =>
     building.floors.flatMap((floor) => Object.values(floor.rooms)),
   );
-  const attentionUnits = rooms.filter(
-    (room) =>
-      isUnpaid(room) ||
-      (statusOf(room) === "occupied" &&
-        ((!room.tenant || room.tenant === "-") ||
-          (!room.payment || room.payment === "-"))),
-  ).length;
-  const occupied = rooms.filter((room) => statusOf(room) === "occupied").length;
-  const vacant = rooms.filter((room) => statusOf(room) === "vacant").length;
-  const inProgress = rooms.filter((room) => statusOf(room) === "in_progress").length;
-  const overdue = rooms.filter(isUnpaid).length;
-  const incomplete = rooms.filter(
-    (room) =>
-      statusOf(room) === "occupied" &&
-      ((!room.tenant || room.tenant === "-") ||
-        (!room.payment || room.payment === "-")),
-  ).length;
+  const metrics = summarizeRooms(rooms);
 
-  document.getElementById("dashboardBuildingCount").textContent =
-    BUILDING_OPTIONS.length;
-  document.getElementById("dashboardActiveBuildingCount").textContent =
-    configuredBuildings.filter((building) => building.active).length;
-  document.getElementById("dashboardTotalBuildingCount").textContent =
-    `dari ${BUILDING_OPTIONS.length}`;
-  document.getElementById("dashboardUnitCount").textContent = rooms.length;
-  document.getElementById("dashboardOccupancyNote").textContent =
-    `${vacant} kosong · ${occupied} terisi · ${inProgress} proses`;
-  document.getElementById("dashboardOverdueCount").textContent = overdue;
-  document.getElementById("attentionCount").textContent = attentionUnits;
-  document.getElementById("attentionPaymentCount").textContent =
-    `${overdue} unit · Perlu ditinjau`;
-  document.getElementById("attentionVacantCount").textContent =
-    `${vacant} unit · Tersedia`;
-  document.getElementById("attentionIncompleteCount").textContent =
-    `${incomplete} unit · Perlu diperbarui`;
+  document.getElementById("dashboardOccupancyPercent").textContent =
+    `${metrics.occupancyPercent}%`;
+  document.getElementById("dashboardPaidCount").textContent = metrics.paid;
+  document.getElementById("dashboardOverdueCount").textContent =
+    `${metrics.chartOverdue} tunggakan`;
+  document.getElementById("dashboardExpiringCount").textContent = metrics.expiring;
+  document.getElementById("roomDonutDescription").textContent =
+    `${metrics.occupied} dari ${metrics.total} ruang terisi`;
+  updateRoomDonut(metrics.total, metrics.occupied);
+
+  const paymentTotal = metrics.paid + metrics.chartOverdue;
+  const paidWidth = paymentTotal ? (metrics.paid / paymentTotal) * 100 : 0;
+  const overdueWidth = paymentTotal ? (metrics.chartOverdue / paymentTotal) * 100 : 0;
+  document.getElementById("paymentStatusPaidBar").style.width = `${paidWidth}%`;
+  document.getElementById("paymentStatusOverdueBar").style.width = `${overdueWidth}%`;
+  document.querySelector(".payment-stacked-bar").setAttribute(
+    "aria-label",
+    `Lunas ${metrics.paid}, tunggakan ${metrics.chartOverdue}`,
+  );
+}
+
+function summarizeRooms(rooms) {
+  const vacant = rooms.filter((room) => statusOf(room) === "vacant").length;
+  const occupied = rooms.filter((room) => statusOf(room) === "occupied").length;
+  const paid = rooms.filter(
+    (room) => statusOf(room) !== "vacant" && isPaid(room) && !isMaintenance(room),
+  ).length;
+  const chartOverdue = rooms.filter(
+    (room) =>
+      statusOf(room) !== "vacant" &&
+      !isMaintenance(room) &&
+      !isPaid(room) &&
+      isUnpaid(room),
+  ).length;
+  const expiring = rooms.filter((room) => {
+    const days = daysLeft(room.end);
+    return statusOf(room) !== "vacant" && days !== null && days >= 0 && days < 90;
+  }).length;
+
+  return {
+    total: rooms.length,
+    occupied,
+    occupancyPercent: rooms.length ? Math.round((occupied / rooms.length) * 100) : 0,
+    paid,
+    chartOverdue,
+    expiring,
+  };
+}
+
+function updateRoomDonut(total, occupied) {
+  const circumference = 2 * Math.PI * 43;
+  const fraction = total > 0 ? occupied / total : 0;
+  const occupiedLength = circumference * fraction;
+  const visibleLength = Math.max(0, occupiedLength - (occupied > 0 ? 2 : 0));
+  const segment = document.getElementById("roomDonutOccupied");
+  segment.style.strokeDasharray = `${visibleLength} ${circumference - visibleLength}`;
+  segment.style.opacity = occupied > 0 ? "1" : "0";
+}
+
+function updateSidebarLayout() {
+  const showMapControls =
+    state.currentView === "map" &&
+    (state.view === "plan" || state.view === "unavailable");
+  if (!showMapControls) state.mapControlsOpen = false;
+  sidebarEl.hidden = false;
+  sidebarMapControlsEl.hidden = !showMapControls;
+  sidebarEl.classList.toggle("is-open", state.sidebarOpen);
+  sidebarEl.inert = !state.sidebarOpen;
+  openSidebarBtn.hidden = state.sidebarOpen;
+  openSidebarBtn.setAttribute("aria-expanded", String(state.sidebarOpen));
+  openMapControlsBtn.hidden = !showMapControls;
+  openMapControlsBtn.setAttribute(
+    "aria-expanded",
+    String(showMapControls && state.mapControlsOpen),
+  );
+  mapControlsSidebarEl.classList.toggle(
+    "is-open",
+    showMapControls && state.mapControlsOpen,
+  );
+  mapControlsSidebarEl.setAttribute(
+    "aria-hidden",
+    String(!showMapControls || !state.mapControlsOpen),
+  );
+  mapControlsSidebarEl.inert = !showMapControls || !state.mapControlsOpen;
+  sidebarContentEl.inert = !showMapControls || !state.mapControlsOpen;
+}
+
+function closeMapControls() {
+  if (!state.mapControlsOpen) return;
+  state.mapControlsOpen = false;
+  updateSidebarLayout();
+}
+
+function setSidebarOpen(isOpen) {
+  if (state.sidebarOpen === isOpen) return;
+  state.sidebarOpen = isOpen;
+  updateSidebarLayout();
 }
 
 function setSyncStatus(status, label, updatedAt) {
@@ -246,7 +501,7 @@ function setSyncStatus(status, label, updatedAt) {
     timeZone: "Asia/Jakarta",
   }).format(updatedAt);
   updateTimeEl.textContent = `Update ${time} WIB`;
-  footerUpdateTimeEl.textContent = `Data Google Sheets terakhir diperbarui · ${time} WIB`;
+  footerUpdateTimeEl.textContent = `Database terakhir diperbarui · ${time} WIB`;
 }
 
 function normalizeFloorId(value) {
@@ -263,20 +518,22 @@ const MASTER_ROOM_FIELDS = {
   area_m2: "area",
   start_date: "start",
   end_date: "end",
-  rent_per_month: "rent",
-  outstanding_amount: "outstandingAmount",
+  outstanding_amount: "legacyOutstandingAmount",
   contract_value: "contractValue",
+  billing_period: "billingPeriod",
+  installment_interval_months: "installmentIntervalMonths",
+  initial_payment_amount: "initialPaymentAmount",
+  partial_payment_schedule: "partialPaymentSchedule",
   last_payment_date: "lastPaymentDate",
+  electricity_cost_rp: "electricityCostRp",
   electricity_kwh: "electricityKwh",
-  water_m3: "waterM3",
+  phone_cost_rp: "phoneCostRp",
   pic: "pic",
   contact: "contact",
-  maintenance_status: "maintenanceStatus",
-  complaint_status: "complaintStatus",
   notes: "notes",
 };
 
-function applySheetRecords(records, endpointDiagnostics = []) {
+function applyDatabaseRecords(records, endpointDiagnostics = []) {
   const diagnostics = [...endpointDiagnostics];
 
   const roomsWithUnknownStatus = new Map();
@@ -303,6 +560,7 @@ function applySheetRecords(records, endpointDiagnostics = []) {
         room.tenant = "Tersedia";
         room.payment = "";
         room.installments = [];
+        room.contractId = "";
         Object.values(MASTER_ROOM_FIELDS).forEach((field) => delete room[field]);
       }),
     ),
@@ -357,6 +615,7 @@ function applySheetRecords(records, endpointDiagnostics = []) {
     }
 
     room.status = occupancy;
+    room.contractId = record.contract_id || "";
     room.tenant =
       occupancy === "vacant" ? "Tersedia" : record.tenant || "-";
     room.payment = record.payment_status || "";
@@ -372,10 +631,13 @@ function applySheetRecords(records, endpointDiagnostics = []) {
       room[target] =
         [
           "area_m2",
-          "rent_per_month",
           "outstanding_amount",
           "electricity_kwh",
-          "water_m3",
+          "electricity_cost_rp",
+          "phone_cost_rp",
+          "contract_value",
+          "initial_payment_amount",
+          "installment_interval_months",
         ].includes(source) && Number.isFinite(Number(value))
           ? Number(value)
           : value;
@@ -386,7 +648,7 @@ function applySheetRecords(records, endpointDiagnostics = []) {
   if (diagnosticSignature !== lastUnmatchedSignature) {
     if (diagnostics.length) {
       console.warn(
-        "Diagnostik master Google Sheets (tidak memuat data tenant):",
+        "Diagnostik pemetaan database (tidak memuat data tenant):",
         diagnostics,
       );
     }
@@ -400,7 +662,10 @@ function applySheetRecords(records, endpointDiagnostics = []) {
   Object.entries(floor.rooms).forEach(([roomId, room]) => {
     const occupancy = statusOf(room);
     if (occupancy) {
-      findById(roomId)?.style.setProperty("--room-color", STATUS[occupancy].color);
+      findById(getSvgId(room, roomId))?.style.setProperty(
+        "--room-color",
+        roomColor(room),
+      );
     }
   });
   mapEl.querySelectorAll(".room-label").forEach((label) => label.remove());
@@ -409,8 +674,14 @@ function applySheetRecords(records, endpointDiagnostics = []) {
   buildUnitList(floor.rooms);
   applyFilter();
 
-  const selectedRoom = mapEl.querySelector(".room.selected");
-  if (selectedRoom && !detailEl.hidden) showDetail(selectedRoom.id);
+  if (
+    selectedRoomId &&
+    floor.rooms[selectedRoomId] &&
+    findById(getSvgId(floor.rooms[selectedRoomId], selectedRoomId))?.classList.contains("selected") &&
+    !detailEl.hidden
+  ) {
+    showDetail(selectedRoomId);
+  }
 }
 
 const getBuilding = () => DATA.buildings.find((b) => b.id === state.buildingId);
@@ -494,7 +765,7 @@ async function render() {
 
   detailEl.hidden = true;
   backBtn.hidden = state.view === "area";
-  sidebarEl.hidden = state.view !== "plan" && state.view !== "unavailable";
+  updateSidebarLayout();
   floorPickerEl.hidden = state.view !== "area" || !state.floorPickerOpen;
   MapView.detach();
 
@@ -512,6 +783,11 @@ async function render() {
     console.error(err);
     mapEl.innerHTML = `<p class="error">Gagal memuat: ${err.message}</p>`;
   }
+}
+
+function renderCurrentView() {
+  if (state.view === "area" && areaBasemap) return Promise.resolve();
+  return render();
 }
 
 function openFloorPicker(building) {
@@ -759,10 +1035,11 @@ async function showFloorPlan() {
     }
     el.classList.add("clickable", "room");
     const occupancy = statusOf(room);
-    if (occupancy) {
-      el.style.setProperty("--room-color", STATUS[occupancy].color);
-    }
-    el.addEventListener("click", () => selectRoom(roomId));
+    el.style.setProperty("--room-color", roomColor(room));
+    el.addEventListener("click", (event) => {
+      closeDetail();
+      showRoomPopup(roomId, el, event);
+    });
   });
 
   markZones(f.svgPrefix || f.id + "_");
@@ -787,25 +1064,25 @@ async function showFloorPlan() {
 /* ---------- RINGKASAN + LEGENDA ---------- */
 function buildSummary(rooms = {}) {
   const list = Object.values(rooms);
-
-  const rows = Object.entries(STATUS).map(([key, s]) => {
-    const n = list.filter((room) => statusOf(room) === key).length;
-    return `<div class="sum-item">
-              <span class="swatch" style="background:${s.color}"></span>${s.label}<b>${n}</b>
-            </div>`;
-  });
+  const paid = list.filter(
+    (room) => statusOf(room) !== "vacant" && isPaid(room) && !isMaintenance(room),
+  ).length;
   const unpaid = list.filter(isUnpaid).length;
+  const vacant = list.filter((room) => statusOf(room) === "vacant").length;
+  const maintenance = list.filter(isMaintenance).length;
 
   const expiring = list.filter((r) => {
     const d = daysLeft(r.end);
-    return d !== null && d >= 0 && d <= 90;
+    return statusOf(r) !== "vacant" && d !== null && d >= 0 && d < 90;
   }).length;
 
   summaryEl.innerHTML =
-    `<div class="sum-item">Total unit<b>${list.length}</b></div>` +
-    rows.join("") +
-    `<div class="sum-item sum-warn">Tunggakan pembayaran<b>${unpaid}</b></div>` +
-    `<div class="sum-item sum-warn">Kontrak berakhir ≤ 90 hari<b>${expiring}</b></div>`;
+    `<div class="sum-item">Total ruang<b>${list.length}</b></div>` +
+    `<div class="sum-item"><span class="swatch" style="background:${STATUS.occupied.color}"></span>Terisi lunas<b>${paid}</b></div>` +
+    `<div class="sum-item sum-overdue"><span class="swatch"></span>Tunggakan pembayaran<b>${unpaid}</b></div>` +
+    `<div class="sum-item"><span class="swatch" style="background:${STATUS.vacant.color}"></span>Unit kosong<b>${vacant}</b></div>` +
+    `<div class="sum-item"><span class="swatch" style="background:${STATUS.in_progress.color}"></span>Maintenance<b>${maintenance}</b></div>` +
+    `<div class="sum-item sum-warn">Kontrak berakhir &lt; 90 hari<b>${expiring}</b></div>`;
 }
 
 /* ---------- DAFTAR UNIT ---------- */
@@ -813,22 +1090,112 @@ function buildUnitList(rooms = {}) {
   unitListEl.innerHTML = "";
   Object.entries(rooms).forEach(([roomId, room]) => {
     const occupancy = statusOf(room);
-    const st = occupancy ? STATUS[occupancy] : null;
+    const color = roomColor(room);
     const item = document.createElement("div");
     item.className = "unit-item";
     item.dataset.id = roomId;
-    if (st) item.style.setProperty("--c", st.color);
+    item.style.setProperty("--c", color);
     const id = document.createElement("b");
     id.textContent = roomId;
     const tenant = document.createElement("span");
-    tenant.textContent = room.tenant || (occupancy === "vacant" ? "Tersedia" : "-");
+    tenant.textContent = room.tenant ||
+      (occupancy === "vacant" ? "Tersedia" : Auth.currentUser?.role === "client" ? "Terisi" : "-");
     const status = document.createElement("small");
-    if (st) status.style.color = st.color;
-    status.textContent = st?.label || "Status tidak dikenal";
+    status.style.color = color;
+    status.textContent = roomStatusLabel(room);
     item.append(id, tenant, status);
     item.addEventListener("click", () => selectRoom(roomId));
     unitListEl.appendChild(item);
   });
+}
+
+function showRoomPopup(roomId, roomElement, event) {
+  closeMapControls();
+  activeRoomPopup?.remove();
+  const room = getFloor()?.rooms[roomId];
+  if (!room) return;
+
+  const popup = document.createElement("section");
+  popup.className = "map-room-popup";
+  popup.setAttribute("role", "dialog");
+  popup.setAttribute("aria-label", `Ringkasan ruang ${roomId}`);
+
+  const heading = document.createElement("div");
+  heading.className = "map-room-popup-heading";
+  const title = document.createElement("strong");
+  title.textContent = roomId;
+  const closeButton = document.createElement("button");
+  closeButton.className = "map-room-popup-close";
+  closeButton.type = "button";
+  closeButton.setAttribute("aria-label", "Tutup ringkasan ruang");
+  closeButton.textContent = "×";
+  closeButton.addEventListener("click", () => {
+    popup.remove();
+    activeRoomPopup = null;
+  });
+  heading.append(title, closeButton);
+
+  const tenant = document.createElement("p");
+  tenant.className = "map-room-popup-tenant";
+  const isClient = Auth.currentUser?.role === "client";
+  const canViewTenant = !isClient || room.tenant === Auth.currentUser.tenantName;
+  tenant.textContent = isClient && statusOf(room) !== "vacant" && !canViewTenant
+    ? "Informasi tenant tidak tersedia"
+    : statusOf(room) !== "vacant" && room.tenant && room.tenant !== "Tersedia"
+      ? room.tenant
+      : "Belum ada tenant";
+
+  const status = document.createElement("span");
+  status.className = "map-room-popup-status";
+  status.textContent = roomStatusLabel(room);
+
+  const payment = document.createElement("p");
+  payment.className = "map-room-popup-payment";
+  payment.textContent = canViewTenant && room.payment && room.payment !== "-"
+    ? `Pembayaran: ${room.payment}`
+    : isClient && !canViewTenant && statusOf(room) !== "vacant"
+      ? "Ruang terisi"
+      : "Belum ada informasi pembayaran";
+
+  const detailsButton = document.createElement("button");
+  detailsButton.className = "map-room-popup-details";
+  detailsButton.type = "button";
+  detailsButton.textContent = "View Tenant Details";
+  if (!isClient || canViewTenant && statusOf(room) !== "vacant") {
+    detailsButton.addEventListener("click", () => {
+      popup.remove();
+      activeRoomPopup = null;
+      selectRoom(roomId, { allowVacant: !isClient });
+    });
+  }
+
+  popup.append(heading, tenant, status, payment);
+  if (!isClient || canViewTenant && statusOf(room) !== "vacant") {
+    popup.appendChild(detailsButton);
+  }
+  mapEl.appendChild(popup);
+  activeRoomPopup = popup;
+
+  const mapBounds = mapEl.getBoundingClientRect();
+  const roomBounds = roomElement.getBoundingClientRect();
+  const popupBounds = popup.getBoundingClientRect();
+  const pointerX = Number.isFinite(event?.clientX)
+    ? event.clientX - mapBounds.left
+    : roomBounds.left + roomBounds.width / 2 - mapBounds.left;
+  const pointerY = Number.isFinite(event?.clientY)
+    ? event.clientY - mapBounds.top
+    : roomBounds.top + roomBounds.height / 2 - mapBounds.top;
+  const margin = 12;
+  const left = Math.max(
+    margin,
+    Math.min(pointerX - popupBounds.width / 2, mapBounds.width - popupBounds.width - margin),
+  );
+  const top = Math.max(
+    margin,
+    Math.min(pointerY - popupBounds.height - 14, mapBounds.height - popupBounds.height - margin),
+  );
+  popup.style.left = `${left}px`;
+  popup.style.top = `${top}px`;
 }
 
 function confirmAction({ title, message, acceptLabel, variant = "primary" }) {
@@ -868,8 +1235,11 @@ function applyFilter() {
   requestAnimationFrame(() => {
     Object.entries(floor.rooms).forEach(([roomId, room]) => {
       const occupancy = statusOf(room);
-      const match = (wanted === "all" || 
-        (wanted === "overdue" ? isUnpaid(room) : wanted === occupancy)) &&
+      const match = (wanted === "all" ||
+        (wanted === "overdue" ? isUnpaid(room) :
+          wanted === "paid" ? isPaid(room) && occupancy !== "vacant" && !isMaintenance(room) :
+          wanted === "maintenance" ? isMaintenance(room) :
+          wanted === occupancy)) &&
         (roomId + " " + (room.tenant || "")).toLowerCase().includes(q);
 
       const hide = !match;
@@ -901,11 +1271,8 @@ function addLabels(rooms = {}) {
     const svgId = getSvgId(room, roomId);
     const el = findById(svgId);
     if (!el) return;
-    const occupancy = statusOf(room);
-    if (!occupancy || occupancy === "vacant") return;
-
     const box = el.getBBox();
-    const text = room.tenant || roomId;
+    const text = roomLabelText(roomId, room);
 
     const maxChars = Math.max(6, Math.floor(box.width / (FONT * 0.6)));
     const lines = [];
@@ -948,36 +1315,62 @@ function addLabels(rooms = {}) {
 }
 
 /* ---------- TAHAP 4: DETAIL RUANG ---------- */
-function selectRoom(roomId) {
+function selectRoom(roomId, { allowVacant = false } = {}) {
+  const room = getFloor()?.rooms[roomId];
+  const user = Auth.currentUser;
+  if (
+    user?.role === "client" &&
+    (!room || statusOf(room) === "vacant" || room.tenant !== user.tenantName)
+  ) {
+    closeDetail();
+    showToast("Detail ruang hanya tersedia untuk tenant terkait.");
+    return;
+  }
+  if (!room || (!allowVacant && !hasTenantData(room))) {
+    closeDetail();
+    showToast("Ruangan/Tenant ini belum terisi");
+    return;
+  }
+  activeRoomPopup?.remove();
+  activeRoomPopup = null;
+
   selectedRoomId = roomId;
   mapEl
     .querySelectorAll(".room.selected")
     .forEach((e) => e.classList.remove("selected"));
-  findById(roomId)?.classList.add("selected");
+  findById(getSvgId(room, roomId))?.classList.add("selected");
 
   document
     .querySelectorAll(".unit-item")
     .forEach((i) => i.classList.toggle("active", i.dataset.id === roomId));
+  clearTenantBtn.hidden = !hasTenantData(room);
+  editRoomBtn.hidden = user?.role !== "admin";
+  clearTenantBtn.hidden = user?.role !== "admin" || !hasTenantData(room);
 
   showDetail(roomId);
 }
 
 function showDetail(roomId) {
+  closeMapControls();
   const room = getFloor().rooms[roomId];
   populateRoomEditor(roomId, room);
-  const occupancy = statusOf(room);
-  const occupancyStatus = occupancy ? STATUS[occupancy] : null;
   const d = daysLeft(room.end);
 
-  const rows = [];
+  const rows = { general: [], payment: [], utilities: [] };
   const hasValue = (value) =>
     value !== undefined &&
     value !== null &&
     String(value).trim() !== "" &&
     String(value).trim() !== "-";
-  const addRow = (label, value, className = "") => {
-    if (hasValue(value)) rows.push([label, value, className]);
+  const addRow = (section, label, value, className = "") => {
+    if (hasValue(value)) rows[section].push([label, value, className]);
   };
+  const linkedRooms = room.contractId
+    ? Object.entries(getFloor().rooms)
+        .filter(([, item]) => item.contractId === room.contractId)
+        .map(([id]) => id)
+    : [roomId];
+  addRow("general", "Ruangan dalam kontrak", linkedRooms.join(", "));
   const formatMoney = (value) => {
     const amount =
       typeof value === "number"
@@ -990,66 +1383,115 @@ function showDetail(roomId) {
     return Number.isNaN(new Date(value).getTime()) ? value : fmtDate(value);
   };
 
-  addRow("Pembayaran", room.payment);
-  if (String(room.payment || "").toLocaleLowerCase("id-ID") === "termin") {
+  addRow("payment", "Status pembayaran", room.payment);
+  addRow(
+    "payment",
+    String(room.payment || "").toLocaleLowerCase("id-ID") === "lunas"
+      ? "Nilai pembayaran penuh"
+      : "Nilai kontrak",
+    hasValue(room.contractValue) ? formatMoney(room.contractValue) : "",
+  );
+  const paymentScheme = String(room.payment || "").toLocaleLowerCase("id-ID");
+  if (paymentScheme === "lunas") {
+    const billingPeriod = room.billingPeriod === "yearly" ? "Per-Tahun" : "Per-Bulan";
+    addRow("payment", "Periode pembayaran", billingPeriod);
+  } else if (paymentScheme === "termin") {
     const installments = Array.isArray(room.installments) ? room.installments : [];
     const paidTotal = installments.reduce(
       (total, item) => total + (Number(item.amount) || 0),
       0,
     );
-    const remaining = Math.max((Number(room.contractValue) || 0) - paidTotal, 0);
+    const interval = numericAmount(room.installmentIntervalMonths);
     addRow(
-      "Total nilai kontrak",
-      hasValue(room.contractValue) ? formatMoney(room.contractValue) : "",
+      "payment",
+      "Interval pembayaran",
+      interval ? `Setiap ${interval} bulan` : "",
     );
-    installments.forEach((item) => {
-      addRow(`Pembayaran termin ${item.term}`, formatMoney(item.amount));
+    const schedule = buildInstallmentSchedule(
+      room.contractValue,
+      room.start,
+      room.end,
+      interval || 0,
+      installments,
+    );
+    schedule.forEach((item) => {
+      addRow("payment", `Termin ${item.term} · ${item.dueDate}`, `${formatMoney(item.paid)} / ${formatMoney(item.amount)}`);
     });
-    addRow("Total dibayar", formatMoney(paidTotal));
-    addRow("Kekurangan hingga lunas", formatMoney(remaining), remaining > 0 ? "warn" : "");
-  }
-  addRow("Luas", hasValue(room.area) ? `${room.area} m²` : "");
-  addRow("Mulai sewa", formatDateIfValid(room.start));
-  addRow("Berakhir", formatDateIfValid(room.end));
-  if (hasValue(room.end) && d !== null) {
-    addRow("Sisa kontrak", remainingText(room.end), d <= 90 ? "warn" : "");
-  }
-  addRow("Sewa / bulan", hasValue(room.rent) ? formatMoney(room.rent) : "");
-  if (String(room.payment || "").toLocaleLowerCase("id-ID") !== "termin") {
+    addRow("payment", "Total dibayar", formatMoney(paidTotal));
     addRow(
-      "Tunggakan",
-      hasValue(room.outstandingAmount) ? formatMoney(room.outstandingAmount) : "",
+      "payment",
+      "Sisa pembayaran",
+      formatMoney(paymentBalance(room) || 0),
+      (paymentBalance(room) || 0) > 0 ? "warn" : "",
     );
+  } else if (["partial paid", "partial", "sebagian"].includes(paymentScheme)) {
+    const remaining = paymentBalance(room);
+    addRow("payment", "Uang muka / DP", formatMoney(room.initialPaymentAmount));
+    addRow(
+      "payment",
+      "Sisa untuk jadwal khusus",
+      remaining === null ? "" : formatMoney(remaining),
+      remaining > 0 ? "warn" : "",
+    );
+    addRow("payment", "Jadwal pelunasan", room.partialPaymentSchedule);
   }
-  addRow("Pembayaran terakhir", formatDateIfValid(room.lastPaymentDate));
+  addRow("general", "Luas", hasValue(room.area) ? `${room.area} m²` : "");
+  addRow("payment", "Mulai sewa", formatDateIfValid(room.start));
+  addRow("payment", "Berakhir", formatDateIfValid(room.end));
+  if (hasValue(room.end) && d !== null) {
+    addRow("payment", "Sisa kontrak", remainingText(room.end), d < 90 ? "warn" : "");
+  }
+  addRow("payment", "Pembayaran terakhir", formatDateIfValid(room.lastPaymentDate));
   addRow(
-    "Konsumsi listrik",
+    "utilities",
+    "Biaya listrik",
+    hasValue(room.electricityCostRp) ? formatMoney(room.electricityCostRp) : "",
+  );
+  addRow(
+    "utilities",
+    "Pemakaian listrik",
     hasValue(room.electricityKwh) ? `${room.electricityKwh} kWh` : "",
   );
-  addRow("Konsumsi air", hasValue(room.waterM3) ? `${room.waterM3} m³` : "");
-  addRow("PIC", room.pic);
-  addRow("Kontak", room.contact);
-  addRow("Pemeliharaan", room.maintenanceStatus);
-  addRow("Keluhan", room.complaintStatus);
-  addRow("Catatan", room.notes);
+  addRow(
+    "utilities",
+    "Biaya telepon",
+    hasValue(room.phoneCostRp) ? formatMoney(room.phoneCostRp) : "",
+  );
+  addRow("general", "PIC", room.pic);
+  addRow("general", "Kontak Client", room.contact);
+  addRow("utilities", "Catatan", room.notes);
 
   document.getElementById("dUnit").textContent = "Unit " + roomId;
   document.getElementById("dTenant").textContent = room.tenant || "";
   const pill = document.getElementById("dStatus");
-  pill.textContent = occupancyStatus?.label || "Status tidak dikenal";
-  if (occupancyStatus) pill.style.setProperty("--c", occupancyStatus.color);
-  else pill.style.removeProperty("--c");
-  const detailRows = document.getElementById("dRows");
-  detailRows.replaceChildren();
-  rows.forEach(([key, value, className]) => {
-    const row = document.createElement("div");
-    row.className = `row ${className || ""}`;
-    const label = document.createElement("span");
-    label.textContent = key;
-    const content = document.createElement("b");
-    content.textContent = String(value);
-    row.append(label, content);
-    detailRows.appendChild(row);
+  pill.textContent = roomStatusLabel(room);
+  pill.style.setProperty("--c", roomColor(room));
+  setActiveTab(document.getElementById("detailGeneralTab"));
+  Object.entries({
+    general: "dRows",
+    payment: "dPaymentRows",
+    utilities: "dUtilityRows",
+  }).forEach(([section, elementId]) => {
+    const detailRows = document.getElementById(elementId);
+    detailRows.replaceChildren();
+    if (!rows[section].length) {
+      const empty = document.createElement("p");
+      empty.className = "detail-empty";
+      empty.textContent = section === "utilities"
+        ? "Belum ada data utilitas."
+        : "Belum ada data pembayaran.";
+      detailRows.appendChild(empty);
+    }
+    rows[section].forEach(([key, value, className]) => {
+      const row = document.createElement("div");
+      row.className = `row ${className || ""}`;
+      const label = document.createElement("span");
+      label.textContent = key;
+      const content = document.createElement("b");
+      content.textContent = String(value);
+      row.append(label, content);
+      detailRows.appendChild(row);
+    });
   });
 
   detailEl.hidden = false;
@@ -1059,58 +1501,73 @@ const EDITABLE_ROOM_FIELDS = [
   "tenant",
   "occupancy_status",
   "payment_status",
-  "area_m2",
   "start_date",
   "end_date",
-  "rent_per_month",
-  "outstanding_amount",
   "contract_value",
+  "billing_period",
+  "installment_interval_months",
+  "initial_payment_amount",
+  "partial_payment_schedule",
   "last_payment_date",
+  "electricity_cost_rp",
   "electricity_kwh",
-  "water_m3",
+  "phone_cost_rp",
   "pic",
   "contact",
-  "maintenance_status",
-  "complaint_status",
   "notes",
 ];
 
-function populateRoomEditor(roomId, room) {
-  if (!roomEditor.hidden && editorRoomId === roomId) return;
+function populateRoomEditor(
+  roomId,
+  room,
+  { isNew = false, rooms = getFloor().rooms } = {},
+) {
+  if (!isNew && !roomEditor.hidden && editorRoomId === roomId) return;
   roomEditor.hidden = true;
+  setActiveTab(document.getElementById("editorGeneralTab"));
   editorRoomId = roomId;
   editorStatusEl.textContent = "";
 
   const occupancy = statusOf(room);
   const values = {
-    tenant: occupancy === "vacant" || room.tenant === "Tersedia" ? "" : room.tenant || "",
-    occupancy_status: occupancy || "vacant",
+    tenant: isNew || occupancy === "vacant" || room.tenant === "Tersedia" ? "" : room.tenant || "",
+    occupancy_status: isNew ? "occupied" : occupancy || "vacant",
     payment_status: room.payment || "",
-    area_m2: numericInputValue(room.area),
     start_date: dateInputValue(room.start),
     end_date: dateInputValue(room.end),
-    rent_per_month: numericInputValue(room.rent),
-    outstanding_amount: numericInputValue(room.outstandingAmount),
     contract_value: numericInputValue(room.contractValue),
+    billing_period: room.billingPeriod || "monthly",
+    installment_interval_months: room.installmentIntervalMonths || "6",
+    initial_payment_amount: numericInputValue(room.initialPaymentAmount),
+    partial_payment_schedule: room.partialPaymentSchedule || "",
     last_payment_date: dateInputValue(room.lastPaymentDate),
+    electricity_cost_rp: numericInputValue(room.electricityCostRp),
     electricity_kwh: numericInputValue(room.electricityKwh),
-    water_m3: numericInputValue(room.waterM3),
+    phone_cost_rp: numericInputValue(room.phoneCostRp),
     pic: room.pic,
     contact: room.contact,
-    maintenance_status: room.maintenanceStatus,
-    complaint_status: room.complaintStatus,
     notes: room.notes,
   };
 
   const paymentSelect = roomEditor.elements.namedItem("payment_status");
-  const paymentValue = String(values.payment_status || "");
+  const normalizedPayment = String(values.payment_status || "").trim().toLocaleLowerCase("id-ID");
+  values.payment_status = normalizedPayment === "partial paid" || normalizedPayment === "partially paid"
+    ? "Partial Paid"
+    : normalizedPayment === "termin"
+      ? "Termin"
+      : normalizedPayment === "lunas" || normalizedPayment === "paid"
+        ? "Lunas"
+        : "";
   if (
-    paymentValue &&
-    !Array.from(paymentSelect.options).some((option) => option.value === paymentValue)
+    values.initial_payment_amount === "" &&
+    ["partial paid", "partially paid"].includes(normalizedPayment) &&
+    numericAmount(room.contractValue) !== null &&
+    numericAmount(room.legacyOutstandingAmount) !== null
   ) {
-    paymentSelect.add(new Option(paymentValue, paymentValue));
+    values.initial_payment_amount =
+      numericAmount(room.contractValue) - numericAmount(room.legacyOutstandingAmount);
   }
-
+  roomEditor.elements.namedItem("occupancy_status").closest("label").hidden = isNew;
   EDITABLE_ROOM_FIELDS.forEach((field) => {
     const control = roomEditor.elements.namedItem(field);
     if (!control) return;
@@ -1119,9 +1576,175 @@ function populateRoomEditor(roomId, room) {
       : values[field] ?? "";
     if (control.hasAttribute("data-currency")) updateCurrencyPreview(field, values[field]);
   });
+  renderContractRoomPicker(roomId, room, rooms);
   renderInstallments(room.installments || []);
   updateInstallmentMode();
 }
+
+function renderContractRoomPicker(selectedRoomId, selectedRoom, rooms = getFloor().rooms) {
+  const contractId = selectedRoom.contractId || "";
+  const linkedRoomIds = new Set(
+    Object.entries(rooms)
+      .filter(([, room]) => room.contractId && room.contractId === contractId)
+      .map(([roomId]) => roomId),
+  );
+  linkedRoomIds.add(selectedRoomId);
+  contractRoomListEl.replaceChildren();
+
+  Object.entries(rooms).forEach(([roomId, room]) => {
+    const isLinkedToAnotherContract =
+      room.contractId && room.contractId !== contractId;
+    const isUnavailable =
+      statusOf(room) !== "vacant" && roomId !== selectedRoomId && !room.contractId;
+    const row = document.createElement("label");
+    row.className = "contract-room-option";
+
+    const checkbox = document.createElement("input");
+    checkbox.type = "checkbox";
+    checkbox.value = roomId;
+    checkbox.checked = linkedRoomIds.has(roomId);
+    checkbox.disabled = Boolean(isLinkedToAnotherContract || isUnavailable);
+
+    const name = document.createElement("span");
+    name.className = "contract-room-name";
+    name.textContent = roomId + (checkbox.disabled ? " · sudah digunakan" : "");
+
+    const area = document.createElement("input");
+    area.type = "number";
+    area.min = "0";
+    area.step = "any";
+    area.placeholder = "Luas m²";
+    area.value = numericInputValue(room.area);
+    area.setAttribute("aria-label", `Luas ruangan ${roomId} dalam meter persegi`);
+    area.disabled = !checkbox.checked || checkbox.disabled;
+
+    checkbox.addEventListener("change", () => {
+      area.disabled = !checkbox.checked;
+    });
+    row.append(checkbox, name, area);
+    contractRoomListEl.appendChild(row);
+  });
+}
+
+function availableRegistrationBuildings() {
+  return DATA.buildings.filter((building) =>
+    building.floors.some((floor) => Object.keys(floor.rooms).length > 0),
+  );
+}
+
+function updateRegistrationFloors() {
+  const building = DATA.buildings.find(
+    (item) => item.id === registrationBuildingEl.value,
+  );
+  registrationContext = null;
+  roomEditor.hidden = true;
+  registrationFloorEl.replaceChildren(new Option("Pilih lantai", ""));
+  registrationRoomEl.replaceChildren(new Option("Pilih ruang", ""));
+  registrationFloorEl.disabled = !building;
+  registrationRoomEl.disabled = true;
+  if (!building) return;
+
+  building.floors
+    .filter((floor) => Object.keys(floor.rooms).length > 0)
+    .forEach((floor) =>
+      registrationFloorEl.add(new Option(floor.name, floor.id)),
+    );
+  registrationFloorEl.value = "";
+}
+
+function updateRegistrationRooms() {
+  const building = DATA.buildings.find(
+    (item) => item.id === registrationBuildingEl.value,
+  );
+  const floor = building?.floors.find(
+    (item) => item.id === registrationFloorEl.value,
+  );
+  registrationRoomEl.replaceChildren(new Option("Pilih ruang", ""));
+  registrationRoomEl.disabled = !floor;
+  roomEditor.hidden = true;
+  if (!floor) {
+    registrationContext = null;
+    return;
+  }
+
+  const vacantRooms = Object.entries(floor.rooms).filter(
+    ([, room]) => statusOf(room) === "vacant",
+  );
+  vacantRooms.forEach(([roomId]) =>
+    registrationRoomEl.add(new Option(roomId, roomId)),
+  );
+  if (!vacantRooms.length) {
+    registrationRoomEl.replaceChildren(new Option("Tidak ada ruang kosong", ""));
+    registrationRoomEl.disabled = true;
+    registrationContext = null;
+    return;
+  }
+
+  registrationRoomEl.value = "";
+  registrationContext = null;
+}
+
+function updateRegistrationTarget() {
+  const building = DATA.buildings.find(
+    (item) => item.id === registrationBuildingEl.value,
+  );
+  const floor = building?.floors.find(
+    (item) => item.id === registrationFloorEl.value,
+  );
+  const roomId = registrationRoomEl.value;
+  const room = floor?.rooms[roomId];
+  if (!building || !floor || !room || statusOf(room) !== "vacant") {
+    registrationContext = null;
+    roomEditor.hidden = true;
+    return;
+  }
+
+  registrationContext = {
+    buildingId: building.id,
+    floorId: floor.id,
+    roomId,
+  };
+  populateRoomEditor(roomId, room, { isNew: true, rooms: floor.rooms });
+  roomEditor.hidden = false;
+  roomEditor.querySelector('[type="submit"]').textContent = "Daftarkan tenant";
+}
+
+function beginNewTenantRegistration() {
+  const buildings = availableRegistrationBuildings();
+  if (!buildings.length) {
+    showToast("Belum ada gedung dan lantai dengan ruang terpetakan untuk pendaftaran.");
+    return;
+  }
+
+  registrationBuildingEl.replaceChildren(new Option("Pilih gedung", ""));
+  buildings.forEach((building) =>
+    registrationBuildingEl.add(new Option(building.name, building.id)),
+  );
+  registrationFloorEl.replaceChildren(new Option("Pilih lantai", ""));
+  registrationRoomEl.replaceChildren(new Option("Pilih ruang", ""));
+  registrationFloorEl.disabled = true;
+  registrationRoomEl.disabled = true;
+  registrationContext = null;
+  roomEditor.hidden = true;
+  newTenantFormHost.appendChild(roomEditor);
+  newTenantDialog.showModal();
+  registrationBuildingEl.focus();
+}
+
+registerTenantBtn.addEventListener("click", beginNewTenantRegistration);
+registrationBuildingEl.addEventListener("change", updateRegistrationFloors);
+registrationFloorEl.addEventListener("change", updateRegistrationRooms);
+registrationRoomEl.addEventListener("change", updateRegistrationTarget);
+closeNewTenantDialogBtn.addEventListener("click", () => newTenantDialog.close());
+newTenantDialog.addEventListener("close", () => {
+  roomEditor.hidden = true;
+  roomEditor.elements.namedItem("occupancy_status").closest("label").hidden = false;
+  roomEditor.querySelector('[type="submit"]').textContent = "Simpan ke database";
+  roomEditorFormHost.appendChild(roomEditor);
+  registrationContext = null;
+  editorRoomId = null;
+  editorStatusEl.textContent = "";
+});
 
 function dateInputValue(value) {
   if (value === undefined || value === null || String(value).trim() === "") return "";
@@ -1182,37 +1805,93 @@ function sanitizeCurrencyWhileTyping(input) {
 
 function readInstallments() {
   return Array.from(installmentListEl.querySelectorAll(".installment-amount"))
-    .map((input, index) => ({
-      term: index + 1,
+    .map((input) => ({
+      term: Number(input.dataset.term),
       amount: numericInputValue(input.value),
     }))
     .filter((item) => item.amount !== "");
 }
 
-function renderInstallments(installments) {
+function addMonths(value, months) {
+  const date = new Date(`${value}T00:00:00`);
+  if (Number.isNaN(date.getTime())) return null;
+  const targetMonth = date.getMonth() + months;
+  const lastDay = new Date(date.getFullYear(), targetMonth + 1, 0).getDate();
+  return new Date(date.getFullYear(), targetMonth, Math.min(date.getDate(), lastDay));
+}
+
+function installmentCount(start, end, interval) {
+  if (!start || !end || !Number.isInteger(interval) || interval < 1) return 0;
+  const startDate = new Date(`${start}T00:00:00`);
+  const endDate = new Date(`${end}T00:00:00`);
+  if (Number.isNaN(startDate.getTime()) || Number.isNaN(endDate.getTime()) || endDate < startDate) {
+    return 0;
+  }
+  let months = (endDate.getFullYear() - startDate.getFullYear()) * 12 +
+    endDate.getMonth() - startDate.getMonth();
+  const anniversary = addMonths(start, months);
+  if (anniversary && anniversary < endDate) months += 1;
+  return Math.max(1, Math.ceil(months / interval));
+}
+
+function buildInstallmentSchedule(contractValue, start, end, interval, paidInstallments = []) {
+  const total = numericAmount(contractValue);
+  const count = installmentCount(dateInputValue(start), dateInputValue(end), Number(interval));
+  if (total === null || total <= 0 || !count) return [];
+  const paidByTerm = new Map(
+    paidInstallments.map((item) => [Number(item.term), numericAmount(item.amount) || 0]),
+  );
+  const baseAmount = Math.floor(total / count);
+  return Array.from({ length: count }, (_, index) => {
+    const term = index + 1;
+    const dueDate = addMonths(dateInputValue(start), index * Number(interval));
+    return {
+      term,
+      amount: term === count ? total - baseAmount * (count - 1) : baseAmount,
+      paid: paidByTerm.get(term) || 0,
+      dueDate: dueDate
+        ? dueDate.toLocaleDateString("id-ID", { day: "numeric", month: "short", year: "numeric" })
+        : "-",
+    };
+  });
+}
+
+function renderInstallments(paidInstallments) {
   installmentListEl.replaceChildren();
-  installments.forEach((installment, index) => {
+  const interval = Number(installmentIntervalInput.value);
+  const schedule = buildInstallmentSchedule(
+    numericInputValue(contractValueInput.value),
+    startDateInput.value,
+    endDateInput.value,
+    interval,
+    paidInstallments,
+  );
+  schedule.forEach((installment) => {
     const row = document.createElement("div");
     row.className = "installment-row";
+    const terms = document.createElement("div");
+    terms.className = "installment-due";
+    terms.textContent = `Termin ${installment.term} · ${installment.dueDate} · ${fmtRupiah(installment.amount)}`;
     const label = document.createElement("label");
     const labelText = document.createElement("span");
-    labelText.textContent = `Nominal termin ${index + 1} (Rp)`;
+    labelText.textContent = "Nominal dibayar (Rp)";
     const input = document.createElement("input");
     input.className = "installment-amount";
+    input.dataset.term = String(installment.term);
     input.type = "text";
     input.inputMode = "numeric";
     input.autocomplete = "off";
-    input.value = formatCurrencyInput(installment.amount);
+    input.value = formatCurrencyInput(installment.paid);
     label.append(labelText, input);
-    const remove = document.createElement("button");
-    remove.className = "remove-installment";
-    remove.type = "button";
-    remove.setAttribute("aria-label", `Hapus termin ${index + 1}`);
-    remove.title = `Hapus termin ${index + 1}`;
-    remove.textContent = "×";
-    row.append(label, remove);
+    row.append(terms, label);
     installmentListEl.appendChild(row);
   });
+  if (!schedule.length && paymentStatusInput.value.toLocaleLowerCase("id-ID") === "termin") {
+    const hint = document.createElement("p");
+    hint.className = "detail-empty";
+    hint.textContent = "Isi nilai kontrak dan rentang tanggal kontrak untuk membuat jadwal termin.";
+    installmentListEl.appendChild(hint);
+  }
   updateInstallmentSummary();
 }
 
@@ -1222,27 +1901,36 @@ function updateInstallmentSummary() {
   const remaining = Math.max((contractValue || 0) - paidTotal, 0);
   installmentPaidTotalEl.textContent = fmtRupiah(paidTotal);
   installmentRemainingEl.textContent = fmtRupiah(remaining);
-  if (paymentStatusInput.value.toLocaleLowerCase("id-ID") === "termin") {
-    outstandingInput.value = String(remaining);
-    updateCurrencyPreview("outstanding_amount", remaining);
-  }
   installmentRemainingEl.classList.toggle(
     "installment-overpaid",
     contractValue !== "" && paidTotal > contractValue,
   );
 }
 
-function updateInstallmentMode() {
-  const isInstallment = paymentStatusInput.value.toLocaleLowerCase("id-ID") === "termin";
-  installmentEditorEl.hidden = !isInstallment;
-  outstandingLabel.hidden = isInstallment;
-  if (isInstallment) updateInstallmentSummary();
+function updatePartialPaymentSummary() {
+  const contractValue = numericInputValue(contractValueInput.value);
+  const initialPayment = numericInputValue(initialPaymentInput.value);
+  partialPaymentRemainingEl.textContent =
+    contractValue === "" || initialPayment === ""
+      ? "Isi nilai kontrak dan DP"
+      : fmtRupiah(Math.max(contractValue - initialPayment, 0));
 }
 
-document.getElementById("addInstallmentBtn").addEventListener("click", () => {
-  renderInstallments([...readInstallments(), { amount: "" }]);
-  installmentListEl.lastElementChild?.querySelector("input")?.focus();
-});
+function updateInstallmentSchedule() {
+  renderInstallments(readInstallments());
+}
+
+function updateInstallmentMode() {
+  const mode = paymentStatusInput.value.toLocaleLowerCase("id-ID");
+  const isInstallment = mode === "termin";
+  const isPartial = ["partial paid", "partial", "sebagian"].includes(mode);
+  const isPaidInFull = mode === "lunas";
+  installmentEditorEl.hidden = !isInstallment;
+  partialPaymentEditorEl.hidden = !isPartial;
+  billingPeriodLabelEl.hidden = !isPaidInFull;
+  if (isInstallment) updateInstallmentSchedule();
+  if (isPartial) updatePartialPaymentSummary();
+}
 
 installmentListEl.addEventListener("input", (event) => {
   if (!event.target.matches(".installment-amount")) return;
@@ -1261,19 +1949,15 @@ installmentListEl.addEventListener("focusout", (event) => {
   event.target.value = formatCurrencyInput(event.target.value);
 });
 
-installmentListEl.addEventListener("click", (event) => {
-  const button = event.target.closest(".remove-installment");
-  if (!button) return;
-  const row = button.closest(".installment-row");
-  const rows = Array.from(installmentListEl.children);
-  const amounts = rows
-    .filter((item) => item !== row)
-    .map((item) => ({ amount: numericInputValue(item.querySelector("input").value) }));
-  renderInstallments(amounts);
+contractValueInput.addEventListener("input", () => {
+  updateInstallmentSchedule();
+  updatePartialPaymentSummary();
 });
-
-contractValueInput.addEventListener("input", updateInstallmentSummary);
 paymentStatusInput.addEventListener("change", updateInstallmentMode);
+installmentIntervalInput.addEventListener("change", updateInstallmentSchedule);
+startDateInput.addEventListener("change", updateInstallmentSchedule);
+endDateInput.addEventListener("change", updateInstallmentSchedule);
+initialPaymentInput.addEventListener("input", updatePartialPaymentSummary);
 
 roomEditor.querySelectorAll("[data-currency]").forEach((input) => {
   input.addEventListener("input", () => sanitizeCurrencyWhileTyping(input));
@@ -1291,74 +1975,206 @@ editRoomBtn.addEventListener("click", () => {
   if (!selectedRoomId) return;
   roomEditor.hidden = false;
   editorStatusEl.textContent = "";
+  roomEditor.querySelector('[type="submit"]').textContent = "Simpan Perubahan";
+  roomEditorDialog.showModal();
 });
 
 document.getElementById("cancelRoomEdit").addEventListener("click", () => {
+  if (registrationContext) {
+    newTenantDialog.close();
+    return;
+  }
   roomEditor.hidden = true;
   editorStatusEl.textContent = "";
+  roomEditorDialog.close();
   if (selectedRoomId) {
     populateRoomEditor(selectedRoomId, getFloor().rooms[selectedRoomId]);
   }
 });
 
+closeRoomEditorDialogBtn.addEventListener("click", () => {
+  document.getElementById("cancelRoomEdit").click();
+});
+
+roomEditorDialog.addEventListener("cancel", (event) => {
+  event.preventDefault();
+  document.getElementById("cancelRoomEdit").click();
+});
+
+roomEditorDialog.addEventListener("close", () => {
+  roomEditor.hidden = true;
+  roomEditor.querySelector('[type="submit"]').textContent = "Simpan ke database";
+  editorStatusEl.textContent = "";
+  roomEditorFormHost.appendChild(roomEditor);
+});
+
 roomEditor.addEventListener("submit", async (event) => {
   event.preventDefault();
-  if (!selectedRoomId || !state.buildingId || !state.floorId) return;
+  const isNewRegistration = Boolean(registrationContext);
+  const activeRoomId = registrationContext?.roomId || selectedRoomId;
+  const buildingId = registrationContext?.buildingId || state.buildingId;
+  const floorId = registrationContext?.floorId || state.floorId;
+  const floor = DATA.buildings
+    .find((building) => building.id === buildingId)
+    ?.floors.find((item) => item.id === floorId);
+  if (!activeRoomId || !buildingId || !floorId || !floor) return;
 
   const installments = readInstallments();
   const contractValue = numericInputValue(contractValueInput.value);
   const totalPaid = installments.reduce((total, item) => total + item.amount, 0);
-  if (paymentStatusInput.value.toLocaleLowerCase("id-ID") === "termin") {
-    if (contractValue === "" || contractValue <= 0) {
-      editorStatusEl.textContent = "Isi total nilai kontrak untuk pembayaran termin.";
-      contractValueInput.focus();
+  const paymentMode = paymentStatusInput.value.toLocaleLowerCase("id-ID");
+  if (!["lunas", "termin", "partial paid"].includes(paymentMode)) {
+    editorStatusEl.textContent = "Pilih skema pembayaran Lunas, Termin, atau Partial Paid.";
+    setActiveTab(document.getElementById("editorPaymentTab"));
+    paymentStatusInput.focus();
+    return;
+  }
+  if (contractValue === "" || contractValue <= 0) {
+    editorStatusEl.textContent = "Isi nilai pembayaran atau nilai kontrak lebih dari Rp0.";
+    setActiveTab(document.getElementById("editorPaymentTab"));
+    contractValueInput.focus();
+    return;
+  }
+  if (paymentMode === "lunas" && !["monthly", "yearly"].includes(roomEditor.elements.namedItem("billing_period").value)) {
+    editorStatusEl.textContent = "Pilih periode pembayaran Per-Bulan atau Per-Tahun.";
+    setActiveTab(document.getElementById("editorPaymentTab"));
+    roomEditor.elements.namedItem("billing_period").focus();
+    return;
+  }
+  if (paymentMode === "termin") {
+    const expectedCount = installmentCount(
+      startDateInput.value,
+      endDateInput.value,
+      Number(installmentIntervalInput.value),
+    );
+    if (!expectedCount) {
+      editorStatusEl.textContent = "Isi rentang tanggal kontrak yang valid untuk membuat jadwal termin.";
+      setActiveTab(document.getElementById("editorPaymentTab"));
+      startDateInput.focus();
+      return;
+    }
+    if (installments.some((item) => item.amount > 0) && installments.length > expectedCount) {
+      editorStatusEl.textContent = "Pembayaran termin melebihi jumlah jadwal yang dibuat.";
       return;
     }
     if (totalPaid > contractValue) {
-      editorStatusEl.textContent = "Total pembayaran termin tidak boleh melebihi nilai kontrak.";
+      editorStatusEl.textContent = "Total nominal yang sudah dibayar tidak boleh melebihi nilai kontrak.";
+      setActiveTab(document.getElementById("editorPaymentTab"));
+      return;
+    }
+  }
+  if (paymentMode === "partial paid") {
+    const initialPayment = numericInputValue(initialPaymentInput.value);
+    if (initialPayment === "" || initialPayment <= 0 || initialPayment > contractValue) {
+      editorStatusEl.textContent = "Isi nominal DP lebih dari Rp0 dan tidak melebihi nilai kontrak.";
+      setActiveTab(document.getElementById("editorPaymentTab"));
+      initialPaymentInput.focus();
+      return;
+    }
+    if (!partialPaymentScheduleInput.value.trim()) {
+      editorStatusEl.textContent = "Isi jadwal pelunasan sesuai kesepakatan.";
+      setActiveTab(document.getElementById("editorPaymentTab"));
+      partialPaymentScheduleInput.focus();
       return;
     }
   }
 
+  const formData = new FormData(roomEditor);
+  const tenantName = String(formData.get("tenant") || "").trim();
+  if (!tenantName) {
+    editorStatusEl.textContent = "Nama tenant wajib diisi.";
+    roomEditor.elements.namedItem("tenant").focus();
+    return;
+  }
+  if (!["occupied", "in_progress"].includes(String(formData.get("occupancy_status") || ""))) {
+    editorStatusEl.textContent = "Status okupansi kontrak harus Terisi atau Dalam Proses.";
+    setActiveTab(document.getElementById("editorGeneralTab"));
+    roomEditor.elements.namedItem("occupancy_status").focus();
+    return;
+  }
+  if (isNewRegistration && statusOf(floor.rooms[activeRoomId]) !== "vacant") {
+    editorStatusEl.textContent = "Ruang yang dipilih sudah tidak kosong. Pilih ruang lain.";
+    return;
+  }
+  const linkedRooms = Array.from(
+    contractRoomListEl.querySelectorAll('input[type="checkbox"]:checked'),
+  ).map((checkbox) => {
+    const areaInput = checkbox.closest(".contract-room-option").querySelector('input[type="number"]');
+    return {
+      room_id: checkbox.value,
+      area_m2: areaInput.value === "" ? "" : Number(areaInput.value),
+    };
+  });
+  if (!linkedRooms.length) {
+    editorStatusEl.textContent = "Pilih minimal satu ruangan untuk kontrak.";
+    return;
+  }
+
   const confirmed = await confirmAction({
-    title: "Simpan perubahan unit?",
-    message: `Perubahan data unit ${state.buildingId} / ${state.floorId} / ${selectedRoomId} akan disimpan ke spreadsheet.`,
-    acceptLabel: "Ya, simpan",
+    title: isNewRegistration ? "Daftarkan tenant baru?" : "Simpan data kontrak?",
+    message: `${isNewRegistration ? "Data tenant akan ditambahkan sebagai baris baru" : "Data instansi akan disimpan"} dan ditautkan ke ${linkedRooms.length} ruangan: ${linkedRooms.map((room) => room.room_id).join(", ")}.`,
+    acceptLabel: isNewRegistration ? "Ya, daftarkan" : "Ya, simpan",
   });
   if (!confirmed) return;
 
-  const formData = new FormData(roomEditor);
   const record = {
-    building: state.buildingId,
-    floor: state.floorId,
-    room_id: selectedRoomId,
+    building: buildingId,
+    floor: floorId,
+    room_id: activeRoomId,
+    contract_id: isNewRegistration ? "" : floor.rooms[activeRoomId].contractId || "",
   };
   EDITABLE_ROOM_FIELDS.forEach((field) => {
     const value = String(formData.get(field) || "").trim();
     record[field] = [
       "area_m2",
       "electricity_kwh",
-      "water_m3",
     ].includes(field)
       ? value === ""
         ? ""
         : Number(value)
-      : ["rent_per_month", "outstanding_amount", "contract_value"].includes(field)
+      : [
+        "contract_value",
+        "initial_payment_amount",
+        "installment_interval_months",
+        "electricity_cost_rp",
+        "phone_cost_rp",
+      ].includes(field)
         ? numericInputValue(value)
       : value;
   });
-  record.installment_payments = JSON.stringify(installments);
+  record.billing_period = paymentMode === "lunas" ? record.billing_period : "";
+  record.installment_interval_months =
+    paymentMode === "termin" ? Number(installmentIntervalInput.value) : "";
+  record.initial_payment_amount =
+    paymentMode === "partial paid" ? numericInputValue(initialPaymentInput.value) : "";
+  record.partial_payment_schedule =
+    paymentMode === "partial paid" ? partialPaymentScheduleInput.value.trim() : "";
+  if (isNewRegistration) record.occupancy_status = "occupied";
+  record.installment_payments = JSON.stringify(paymentMode === "termin" ? installments : []);
 
   const saveButton = roomEditor.querySelector('[type="submit"]');
   saveButton.disabled = true;
   editorStatusEl.textContent = "Menyimpan dan memverifikasi perubahan...";
   try {
-    await SheetsSync.saveRecord(record);
-    roomEditor.hidden = true;
-    editorStatusEl.textContent = "Perubahan tersimpan dan terverifikasi.";
+    if (isNewRegistration) {
+      await TenantApi.createContract(record, linkedRooms);
+      const createdAt = { ...registrationContext };
+      newTenantDialog.close();
+      state.buildingId = createdAt.buildingId;
+      state.floorId = createdAt.floorId;
+      state.view = "plan";
+      await render();
+      selectRoom(createdAt.roomId);
+    } else {
+      await TenantApi.saveContract(record, linkedRooms);
+      roomEditor.hidden = true;
+      roomEditorDialog.close();
+    }
     showActionSuccess(
-      "Berhasil disimpan",
-      "Perubahan data unit berhasil disimpan dan diverifikasi di spreadsheet.",
+      isNewRegistration ? "Tenant berhasil didaftarkan" : "Berhasil disimpan",
+      isNewRegistration
+        ? "Tenant baru berhasil ditambahkan ke database."
+        : "Perubahan data unit berhasil disimpan ke database.",
     );
   } catch (error) {
     console.error("Penyimpanan data unit gagal:", error);
@@ -1369,16 +2185,18 @@ roomEditor.addEventListener("submit", async (event) => {
 });
 
 clearTenantBtn.addEventListener("click", () => {
-  if (selectedRoomId) clearRoomRecord(selectedRoomId);
+  if (selectedRoomId && hasTenantData(getFloor()?.rooms[selectedRoomId])) {
+    clearRoomRecord(selectedRoomId);
+  }
 });
 
 async function clearRoomRecord(roomId) {
   if (!state.buildingId || !state.floorId) return;
   const identity = `${state.buildingId} / ${state.floorId} / ${roomId}`;
   const confirmed = await confirmAction({
-    title: "Kosongkan data tenant?",
-    message: `Data tenant dan detail unit ${identity} akan dikosongkan dari spreadsheet. Baris serta identitas gedung, lantai, dan room_id tetap dipertahankan.`,
-    acceptLabel: "Ya, kosongkan",
+    title: "Hapus seluruh baris tenant?",
+    message: `Data tenant untuk ${identity} akan dihapus dari database. Tindakan ini tidak dapat dibatalkan.`,
+    acceptLabel: "Ya, hapus baris",
     variant: "danger",
   });
   if (!confirmed) return;
@@ -1386,22 +2204,22 @@ async function clearRoomRecord(roomId) {
   const saveButton = roomEditor.querySelector('[type="submit"]');
   saveButton.disabled = true;
   clearTenantBtn.disabled = true;
-  editorStatusEl.textContent = "Mengosongkan data tenant dan memverifikasi perubahan...";
+  editorStatusEl.textContent = "Menghapus data tenant...";
   try {
-    await SheetsSync.clearRecord({
+    await TenantApi.deleteRecord({
       building: state.buildingId,
       floor: state.floorId,
       room_id: roomId,
     });
-    roomEditor.hidden = true;
-    editorStatusEl.textContent = "Data tenant dikosongkan. Identitas unit tetap tersimpan.";
+    closeDetail();
+    editorStatusEl.textContent = "Baris tenant berhasil dihapus.";
     showActionSuccess(
-      "Berhasil dihapus",
-      "Data tenant berhasil dikosongkan. Identitas unit tetap tersimpan di spreadsheet.",
+      "Baris berhasil dihapus",
+      "Data tenant berhasil dihapus dari database.",
     );
   } catch (error) {
-    console.error("Pengosongan data tenant gagal:", error);
-    editorStatusEl.textContent = error.message || "Data unit gagal dikosongkan.";
+    console.error("Penghapusan baris tenant gagal:", error);
+    editorStatusEl.textContent = error.message || "Data unit gagal dihapus.";
   } finally {
     saveButton.disabled = false;
     clearTenantBtn.disabled = false;
@@ -1434,6 +2252,7 @@ document
   .addEventListener("click", closeFloorPicker);
 
 function closeDetail() {
+  if (roomEditorDialog.open) roomEditorDialog.close();
   detailEl.hidden = true;
   selectedRoomId = null;
   mapEl
@@ -1444,10 +2263,136 @@ function closeDetail() {
     .forEach((i) => i.classList.remove("active"));
 }
 document.getElementById("closeDetail").addEventListener("click", closeDetail);
+document.getElementById("collapseSidebar").addEventListener("click", () => {
+  setSidebarOpen(false);
+});
+openSidebarBtn.addEventListener("click", () => {
+  setSidebarOpen(true);
+});
+openMapControlsBtn.addEventListener("click", () => {
+  activeRoomPopup?.remove();
+  activeRoomPopup = null;
+  closeDetail();
+  state.mapControlsOpen = true;
+  updateSidebarLayout();
+});
+closeMapControlsBtn.addEventListener("click", () => {
+  closeMapControls();
+});
+sidebarEl.addEventListener("click", () => {
+  setSidebarOpen(!state.sidebarOpen);
+});
+sidebarEl
+  .querySelector(".main-navigation")
+  .addEventListener("click", (event) => event.stopPropagation());
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && state.mapControlsOpen) {
+    closeMapControls();
+    openMapControlsBtn.focus();
+    return;
+  }
+  if (event.key === "Escape" && state.sidebarOpen) {
+    setSidebarOpen(false);
+    openSidebarBtn.focus();
+  }
+});
+document.querySelectorAll("[data-map-controls-tab]").forEach((tab) => {
+  tab.addEventListener("click", () => {
+    document.querySelectorAll("[data-map-controls-tab]").forEach((item) => {
+      const selected = item === tab;
+      item.setAttribute("aria-selected", String(selected));
+      item.tabIndex = selected ? 0 : -1;
+      document.getElementById(item.getAttribute("aria-controls")).hidden = !selected;
+    });
+  });
+  tab.addEventListener("keydown", (event) => {
+    if (!["ArrowLeft", "ArrowRight"].includes(event.key)) return;
+    event.preventDefault();
+    const tabs = [...document.querySelectorAll("[data-map-controls-tab]")];
+    const index = tabs.indexOf(tab);
+    const offset = event.key === "ArrowRight" ? 1 : -1;
+    const next = tabs[(index + offset + tabs.length) % tabs.length];
+    next.click();
+    next.focus();
+  });
+});
+function setCurrentView(view) {
+  state.currentView = view;
+  [
+    [showMapViewBtn, view === "map"],
+    [showTenantTableBtn, view === "data"],
+    [showClientDataBtn, view === "client"],
+  ].forEach(([button, isActive]) => {
+    button.classList.toggle("is-active", isActive);
+    button.setAttribute("aria-current", isActive ? "page" : "false");
+  });
+  updateSidebarLayout();
+}
+
+showMapViewBtn.addEventListener("click", () => {
+  ClientPortal.closeInvoice();
+  tenantTableViewEl.hidden = true;
+  clientPortalViewEl.hidden = true;
+  invoicePageEl.hidden = true;
+  mapLayoutEl.hidden = false;
+  document.body.dataset.view = state.view;
+  setCurrentView("map");
+  void renderCurrentView();
+});
+showTenantTableBtn.addEventListener("click", () => {
+  if (Auth.currentUser?.role === "client") return;
+  ClientPortal.closeInvoice();
+  mapLayoutEl.hidden = true;
+  tenantTableViewEl.hidden = false;
+  clientPortalViewEl.hidden = true;
+  invoicePageEl.hidden = true;
+  document.body.dataset.view = "tenants";
+  setCurrentView("data");
+  void TenantTable.refresh();
+});
+showClientDataBtn.addEventListener("click", () => {
+  if (Auth.currentUser?.role !== "client") return;
+  ClientPortal.closeInvoice();
+  mapLayoutEl.hidden = true;
+  tenantTableViewEl.hidden = true;
+  clientPortalViewEl.hidden = false;
+  invoicePageEl.hidden = true;
+  document.body.dataset.view = "client";
+  setCurrentView("client");
+  void ClientPortal.refresh();
+});
+document.addEventListener("pintar:open-room", async (event) => {
+  const { building, floor, room_id: roomId } = event.detail;
+  if (!building || !floor || !roomId) return;
+  const buildingData = DATA.buildings.find(
+    (item) => item.id.toLocaleUpperCase("id-ID") === building.toLocaleUpperCase("id-ID"),
+  );
+  const floorData = buildingData?.floors.find(
+    (item) => normalizeFloorId(item.id) === normalizeFloorId(floor),
+  );
+  if (!buildingData || !floorData || !floorData.rooms[roomId]) {
+    console.warn("Tenant room is not mapped to a floor plan:", event.detail);
+    return;
+  }
+
+  state.buildingId = buildingData.id;
+  state.floorId = floorData.id;
+  state.view = "plan";
+  setCurrentView("map");
+  tenantTableViewEl.hidden = true;
+  clientPortalViewEl.hidden = true;
+  invoicePageEl.hidden = true;
+  mapLayoutEl.hidden = false;
+  await render();
+  selectRoom(roomId);
+});
 document.addEventListener(
   "keydown",
   (e) => {
     if (e.key === "Escape") {
+      if (newTenantDialog.open) return;
+      activeRoomPopup?.remove();
+      activeRoomPopup = null;
       closeDetail();
       closeFloorPicker();
     }
@@ -1455,11 +2400,48 @@ document.addEventListener(
 );
 
 /* ---------- MULAI ---------- */
-MapView.init(mapEl);
-prepareData();
-updateDashboard();
-render();
-SheetsSync.init({
-  onRecords: applySheetRecords,
-  onStatus: setSyncStatus,
+let appInitialized = false;
+
+window.addEventListener("pintar:authenticated", (event) => {
+  const user = event.detail.user;
+  if (!user) return;
+  applyRole(user);
+  if (!appInitialized) {
+    MapView.init(mapEl);
+    prepareData();
+    appInitialized = true;
+  }
+  activeRoomPopup?.remove();
+  activeRoomPopup = null;
+  closeDetail();
+  applyDatabaseRecords([]);
+  updateDashboard();
+  void renderCurrentView();
+  TenantApi.init({
+    onRecords: (records, diagnostics) => {
+      applyDatabaseRecords(records, diagnostics);
+      if (user.role === "client") void ClientPortal.refresh();
+    },
+    onStatus: setSyncStatus,
+  });
+  if (!tenantTableViewEl.hidden && user.role !== "client") void TenantTable.refresh();
+  if (!clientPortalViewEl.hidden && user.role === "client") void ClientPortal.refresh();
 });
+
+window.addEventListener("pintar:logged-out", () => {
+  TenantApi.stop();
+  activeRoomPopup?.remove();
+  activeRoomPopup = null;
+  closeDetail();
+  if (appInitialized) {
+    applyDatabaseRecords([]);
+    updateDashboard();
+  }
+  mapLayoutEl.hidden = false;
+  workspaceLayoutEl.hidden = false;
+  tenantTableViewEl.hidden = true;
+  clientPortalViewEl.hidden = true;
+  invoicePageEl.hidden = true;
+});
+
+void Auth.restore();
