@@ -17,11 +17,13 @@ const MapView = (() => {
 
   let host = null; // elemen #map
   let svg = null;
+  let svgRect = null;
   let vb = null; // viewBox aktif {x,y,w,h}
   let home = null; // viewBox fokus gedung
   let full = null; // viewBox peta penuh
   let drag = null;
   let pinch = null;
+  let viewBoxFrame = 0;
   const touchPointers = new Map();
   let suppressClick = false;
 
@@ -80,7 +82,7 @@ const MapView = (() => {
 
   // Kotak + padding, disesuaikan ke rasio layar agar tidak ada letterbox
   function homeBox(box) {
-    const r = svg.getBoundingClientRect();
+    const r = svgRect;
     const aspect = r.width && r.height ? r.width / r.height : box.width / box.height;
     let w = box.width * (1 + PAD * 2);
     let h = box.height * (1 + PAD * 2);
@@ -96,14 +98,61 @@ const MapView = (() => {
     const cx = clamp(x + w / 2, full.x, full.x + full.w);
     const cy = clamp(y + h / 2, full.y, full.y + full.h);
     vb = { x: cx - w / 2, y: cy - h / 2, w, h };
-    svg.setAttribute("viewBox", `${vb.x} ${vb.y} ${vb.w} ${vb.h}`);
+    if (viewBoxFrame) return;
+
+    const targetSvg = svg;
+    viewBoxFrame = requestAnimationFrame(() => {
+      viewBoxFrame = 0;
+      if (svg !== targetSvg || !targetSvg?.isConnected || !vb) return;
+      writeViewBox(targetSvg);
+    });
+  }
+
+  function writeViewBox(targetSvg = svg) {
+    if (!targetSvg || targetSvg !== svg || !targetSvg.isConnected || !vb) return;
+    targetSvg.setAttribute("viewBox", `${vb.x} ${vb.y} ${vb.w} ${vb.h}`);
+  }
+
+  function flushViewBox() {
+    if (viewBoxFrame) cancelAnimationFrame(viewBoxFrame);
+    viewBoxFrame = 0;
+    writeViewBox();
   }
 
   function fitAspect() {
-    const r = svg.getBoundingClientRect();
+    if (!svg) return;
+    svgRect = svg.getBoundingClientRect();
+    const r = svgRect;
     if (!r.width || !r.height) return;
     const h = vb.w / (r.width / r.height);
     setVB(vb.x, vb.y + (vb.h - h) / 2, vb.w, h);
+  }
+
+  function screenToViewBox(clientX, clientY, rect = svgRect, viewBox = vb) {
+    const scale = Math.min(rect.width / viewBox.w, rect.height / viewBox.h);
+    const offsetX = (rect.width - viewBox.w * scale) / 2;
+    const offsetY = (rect.height - viewBox.h * scale) / 2;
+    return {
+      x: viewBox.x + (clientX - rect.left - offsetX) / scale,
+      y: viewBox.y + (clientY - rect.top - offsetY) / scale,
+    };
+  }
+
+  function viewBoxScale(rect = svgRect, viewBox = vb) {
+    return Math.min(rect.width / viewBox.w, rect.height / viewBox.h);
+  }
+
+  function createDrag(id, x, y) {
+    return {
+      id,
+      startX: x,
+      startY: y,
+      x,
+      y,
+      deltaX: 0,
+      deltaY: 0,
+      active: false,
+    };
   }
 
   /* ---------- Cari akar denah & tandai basemap ---------- */
@@ -142,7 +191,9 @@ const MapView = (() => {
   function markBasemap(plan) {
     for (let n = plan; n && n !== svg; n = n.parentNode) {
       Array.from(n.parentNode.children).forEach((sib) => {
-        if (sib !== n && !sib.matches(SKIP)) sib.classList.add("basemap");
+        if (sib !== n && !sib.matches(SKIP) && !sib.matches("image")) {
+          sib.classList.add("basemap");
+        }
       });
     }
   }
@@ -150,6 +201,7 @@ const MapView = (() => {
   /* ---------- API ---------- */
   function attach(svgEl, { planId, prefix, rooms }) {
     svg = svgEl;
+    svgRect = svg.getBoundingClientRect();
 
     const raw = svg.viewBox?.baseVal;
     if (raw && raw.width) {
@@ -198,11 +250,31 @@ const MapView = (() => {
   }
 
   function detach() {
+    if (viewBoxFrame) cancelAnimationFrame(viewBoxFrame);
+    viewBoxFrame = 0;
+    svg?.style.removeProperty("transform");
+    svg?.classList.remove("is-dragging");
     svg = null;
+    svgRect = null;
     drag = null;
     pinch = null;
     touchPointers.clear();
     host?.classList.remove("dragging");
+  }
+
+  function finishDrag() {
+    if (!drag?.active || !svg) return false;
+
+    const k = viewBoxScale();
+    setVB(vb.x - drag.deltaX / k, vb.y - drag.deltaY / k, vb.w, vb.h);
+    flushViewBox();
+    svg.style.removeProperty("transform");
+    svg.classList.remove("is-dragging");
+    host.classList.remove("dragging");
+    drag = null;
+    suppressClick = true;
+    setTimeout(() => (suppressClick = false), 0);
+    return true;
   }
 
   function reset() {
@@ -210,13 +282,10 @@ const MapView = (() => {
   }
 
   function zoomAt(factor, cx, cy) {
-    if (!svg) return;
-    const r = svg.getBoundingClientRect();
-    const m = svg.getScreenCTM();
-    if (!m) return;
-
-    const p = new DOMPoint(cx ?? r.left + r.width / 2, cy ?? r.top + r.height / 2).matrixTransform(
-      m.inverse(),
+    if (!svg || !svgRect?.width || !svgRect?.height) return;
+    const p = screenToViewBox(
+      cx ?? svgRect.left + svgRect.width / 2,
+      cy ?? svgRect.top + svgRect.height / 2,
     );
     const w = clamp(vb.w * factor, full.w * MIN_SCALE, full.w * MAX_SCALE);
     const k = w / vb.w;
@@ -235,17 +304,17 @@ const MapView = (() => {
     if (e.pointerType === "touch") {
       touchPointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
       if (touchPointers.size === 1) {
-        drag = { id: e.pointerId, x: e.clientX, y: e.clientY, active: false };
+        drag = createDrag(e.pointerId, e.clientX, e.clientY);
       }
       if (touchPointers.size === 2) {
+        finishDrag();
         drag = null;
-        host.classList.remove("dragging");
         startPinch();
       }
       return;
     }
     if (e.button !== 0) return;
-    drag = { id: e.pointerId, x: e.clientX, y: e.clientY, active: false };
+    drag = createDrag(e.pointerId, e.clientX, e.clientY);
   }
 
   function onMove(e) {
@@ -265,10 +334,13 @@ const MapView = (() => {
       drag.active = true;
       host.setPointerCapture(e.pointerId); // baru ditangkap setelah terbukti menggeser
       host.classList.add("dragging");
+      svg.classList.add("is-dragging");
     }
 
-    const k = svg.getScreenCTM().a; // px layar per satuan SVG
-    setVB(vb.x - dx / k, vb.y - dy / k, vb.w, vb.h);
+    drag.deltaX = e.clientX - drag.startX;
+    drag.deltaY = e.clientY - drag.startY;
+    svg.style.transform =
+      `translate3d(${drag.deltaX}px, ${drag.deltaY}px, 0px) scale(1)`;
     drag.x = e.clientX;
     drag.y = e.clientY;
   }
@@ -280,12 +352,7 @@ const MapView = (() => {
         pinch = null;
         const remaining = [...touchPointers.entries()][0];
         drag = remaining
-          ? {
-              id: remaining[0],
-              x: remaining[1].x,
-              y: remaining[1].y,
-              active: false,
-            }
+          ? createDrag(remaining[0], remaining[1].x, remaining[1].y)
           : null;
         suppressClick = true;
         setTimeout(() => (suppressClick = false), 0);
@@ -294,22 +361,19 @@ const MapView = (() => {
     }
     if (!drag || e.pointerId !== drag.id) return;
     if (drag.active) {
-      suppressClick = true; // cegah klik "ikutan" setelah menggeser
-      setTimeout(() => (suppressClick = false), 0);
-      host.classList.remove("dragging");
+      finishDrag();
     }
     drag = null;
   }
 
   function startPinch() {
     const [first, second] = [...touchPointers.values()];
-    const rect = svg.getBoundingClientRect();
     const dx = second.x - first.x;
     const dy = second.y - first.y;
     pinch = {
       distance: Math.hypot(dx, dy),
       center: { x: (first.x + second.x) / 2, y: (first.y + second.y) / 2 },
-      rect,
+      rect: svgRect,
       viewBox: { ...vb },
     };
   }
@@ -330,16 +394,20 @@ const MapView = (() => {
     );
     const ratio = width / pinch.viewBox.w;
     const height = pinch.viewBox.h * ratio;
-    const anchorX =
-      pinch.viewBox.x +
-      ((pinch.center.x - pinch.rect.left) / pinch.rect.width) * pinch.viewBox.w;
-    const anchorY =
-      pinch.viewBox.y +
-      ((pinch.center.y - pinch.rect.top) / pinch.rect.height) * pinch.viewBox.h;
-    const x = anchorX - ((center.x - pinch.rect.left) / pinch.rect.width) * width;
-    const y = anchorY - ((center.y - pinch.rect.top) / pinch.rect.height) * height;
+    const anchor = screenToViewBox(
+      pinch.center.x,
+      pinch.center.y,
+      pinch.rect,
+      pinch.viewBox,
+    );
+    const targetCenter = screenToViewBox(center.x, center.y, pinch.rect, {
+      x: 0,
+      y: 0,
+      w: width,
+      h: height,
+    });
 
-    setVB(x, y, width, height);
+    setVB(anchor.x - targetCenter.x, anchor.y - targetCenter.y, width, height);
   }
 
   function onClickCapture(e) {

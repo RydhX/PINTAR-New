@@ -21,6 +21,7 @@ let renderToken = 0;
 const registry = new Map();
 let areaBasemap = null;
 let selectedBasemapId = "imagery";
+let lastDashboardBuildingId = null;
 
 /* ---------- ELEMEN HTML ---------- */
 const mapEl = document.getElementById("map");
@@ -47,7 +48,6 @@ const floorSelectEl = document.getElementById("floorSelect");
 const floorPickerSelectEl = document.getElementById("floorPickerSelect");
 const syncStatusEl = document.getElementById("syncStatus");
 const updateTimeEl = document.getElementById("updateTime");
-const footerUpdateTimeEl = document.getElementById("footerUpdateTime");
 const editRoomBtn = document.getElementById("editRoomBtn");
 const roomEditor = document.getElementById("roomEditor");
 const roomEditorDialog = document.getElementById("roomEditorDialog");
@@ -410,6 +410,7 @@ function updateDashboard() {
     "aria-label",
     `Lunas ${metrics.paid}, tunggakan ${metrics.chartOverdue}`,
   );
+  lastDashboardBuildingId = state.buildingId;
 }
 
 function summarizeRooms(rooms) {
@@ -501,7 +502,6 @@ function setSyncStatus(status, label, updatedAt) {
     timeZone: "Asia/Jakarta",
   }).format(updatedAt);
   updateTimeEl.textContent = `Update ${time} WIB`;
-  footerUpdateTimeEl.textContent = `Database terakhir diperbarui · ${time} WIB`;
 }
 
 function normalizeFloorId(value) {
@@ -513,6 +513,7 @@ function normalizeFloorId(value) {
 }
 
 let lastUnmatchedSignature = "";
+let lastAppliedRecordSignature = null;
 
 const MASTER_ROOM_FIELDS = {
   area_m2: "area",
@@ -533,7 +534,13 @@ const MASTER_ROOM_FIELDS = {
   notes: "notes",
 };
 
-function applyDatabaseRecords(records, endpointDiagnostics = []) {
+function applyDatabaseRecords(records, endpointDiagnostics = [], { force = false } = {}) {
+  const recordSignature = JSON.stringify([records, endpointDiagnostics]);
+  if (!force && recordSignature === lastAppliedRecordSignature) {
+    if (lastDashboardBuildingId !== state.buildingId) updateDashboard();
+    return false;
+  }
+
   const diagnostics = [...endpointDiagnostics];
 
   const roomsWithUnknownStatus = new Map();
@@ -657,31 +664,34 @@ function applyDatabaseRecords(records, endpointDiagnostics = []) {
 
   updateDashboard();
   const floor = state.view === "plan" ? getFloor() : null;
-  if (!floor) return;
+  if (floor) {
+    Object.entries(floor.rooms).forEach(([roomId, room]) => {
+      const occupancy = statusOf(room);
+      if (occupancy) {
+        findById(getSvgId(room, roomId))?.style.setProperty(
+          "--room-color",
+          roomColor(room),
+        );
+      }
+    });
+    mapEl.querySelectorAll(".room-label").forEach((label) => label.remove());
+    addLabels(floor.rooms);
+    buildSummary(floor.rooms);
+    buildUnitList(floor.rooms);
+    applyFilter();
 
-  Object.entries(floor.rooms).forEach(([roomId, room]) => {
-    const occupancy = statusOf(room);
-    if (occupancy) {
-      findById(getSvgId(room, roomId))?.style.setProperty(
-        "--room-color",
-        roomColor(room),
-      );
+    if (
+      selectedRoomId &&
+      floor.rooms[selectedRoomId] &&
+      findById(getSvgId(floor.rooms[selectedRoomId], selectedRoomId))?.classList.contains("selected") &&
+      !detailEl.hidden
+    ) {
+      showDetail(selectedRoomId);
     }
-  });
-  mapEl.querySelectorAll(".room-label").forEach((label) => label.remove());
-  addLabels(floor.rooms);
-  buildSummary(floor.rooms);
-  buildUnitList(floor.rooms);
-  applyFilter();
-
-  if (
-    selectedRoomId &&
-    floor.rooms[selectedRoomId] &&
-    findById(getSvgId(floor.rooms[selectedRoomId], selectedRoomId))?.classList.contains("selected") &&
-    !detailEl.hidden
-  ) {
-    showDetail(selectedRoomId);
   }
+
+  lastAppliedRecordSignature = recordSignature;
+  return true;
 }
 
 const getBuilding = () => DATA.buildings.find((b) => b.id === state.buildingId);
@@ -724,12 +734,16 @@ function remainingText(end) {
 // Cache menyimpan parsed SVGDocument (cloneable), bukan string
 const svgCache = new Map();
 
-async function loadSVG(file) {
+async function loadSVG(file, token) {
   if (!svgCache.has(file)) {
-    const res = await fetch(file);
+    const requestUrl = new URL(file, document.baseURI);
+    requestUrl.searchParams.set("v", Date.now().toString());
+    const res = await fetch(requestUrl);
     if (!res.ok) throw new Error("SVG tidak ditemukan: " + file);
+    if (token !== renderToken) return false;
 
     const buf = await res.arrayBuffer();
+    if (token !== renderToken) return false;
     const b = new Uint8Array(buf);
     const enc =
       b[0] === 0xff && b[1] === 0xfe
@@ -749,14 +763,19 @@ async function loadSVG(file) {
     // Simpan clone asli untuk di-clone nanti
     svgCache.set(file, svg.cloneNode(true));
   }
+  if (token !== renderToken) return false;
+
   // Clone dari cache dan inject ke DOM (lebih cepat dari innerHTML + parse)
   mapEl.innerHTML = "";
   mapEl.appendChild(svgCache.get(file).cloneNode(true));
+  return true;
 }
 
 /* ---------- RENDER (satu pintu) ---------- */
 async function render() {
+  const token = ++renderToken;
   document.body.dataset.view = state.view;
+  if (lastDashboardBuildingId !== state.buildingId) updateDashboard();
   updateNavigationSelectors();
   if (state.view !== "area" && areaBasemap) {
     areaBasemap.remove();
@@ -776,10 +795,11 @@ async function render() {
   }[state.view];
 
   try {
-    if (state.view === "area") await showArea();
-    else if (state.view === "plan") await showFloorPlan();
+    if (state.view === "area") await showArea(token);
+    else if (state.view === "plan") await showFloorPlan(token);
     else showUnavailablePlan();
   } catch (err) {
+    if (token !== renderToken) return;
     console.error(err);
     mapEl.innerHTML = `<p class="error">Gagal memuat: ${err.message}</p>`;
   }
@@ -794,6 +814,7 @@ function openFloorPicker(building) {
   state.buildingId = building.id;
   state.floorId = null;
   state.floorPickerOpen = true;
+  if (lastDashboardBuildingId !== state.buildingId) updateDashboard();
   floorPickerTitleEl.textContent = building.name;
   floorPickerSelectEl.innerHTML =
     '<option value="">Pilih lantai</option>' +
@@ -896,14 +917,15 @@ function checkSvgAgainstData(rooms = {}) {
 }
 
 /* ---------- TAHAP 1: LOKASI ---------- */
-async function showArea() {
+async function showArea(token) {
   titleEl.textContent = "Area Kantor Pusat";
   if (!window.L) {
     throw new Error(
       "Peta dasar gagal dimuat. Periksa koneksi internet, lalu muat ulang halaman.",
     );
   }
-  await loadSVG(AREA_SVG);
+  if (!(await loadSVG(AREA_SVG, token))) return;
+  if (token !== renderToken || state.view !== "area") return;
 
   BUILDING_OPTIONS.forEach((building) => {
     const el = findById(building.polygonId);
@@ -1020,11 +1042,20 @@ async function showArea() {
 }
 
 /* ---------- TAHAP 3: DENAH LANTAI ---------- */
-async function showFloorPlan() {
+async function showFloorPlan(token) {
+  const buildingId = state.buildingId;
+  const floorId = state.floorId;
   const b = getBuilding();
   const f = getFloor();
+  if (!b || !f) throw new Error("Pilihan gedung atau lantai tidak valid.");
   titleEl.textContent = `${b.name} - ${f.name}`;
-  await loadSVG(f.svg);
+  if (!(await loadSVG(f.svg, token))) return;
+  if (
+    token !== renderToken ||
+    state.view !== "plan" ||
+    state.buildingId !== buildingId ||
+    state.floorId !== floorId
+  ) return;
 
   Object.entries(f.rooms).forEach(([roomId, room]) => {
     const svgId = getSvgId(room, roomId);
@@ -1052,7 +1083,13 @@ async function showFloorPlan() {
 
   const svg = mapEl.querySelector("svg");
   await new Promise((resolve) => requestAnimationFrame(resolve));
-  if (state.view !== "plan" || mapEl.querySelector("svg") !== svg) return;
+  if (
+    token !== renderToken ||
+    state.view !== "plan" ||
+    state.buildingId !== buildingId ||
+    state.floorId !== floorId ||
+    mapEl.querySelector("svg") !== svg
+  ) return;
 
   MapView.attach(svg, {
     planId: f.planId,
@@ -2317,6 +2354,7 @@ document.querySelectorAll("[data-map-controls-tab]").forEach((tab) => {
   });
 });
 function setCurrentView(view) {
+  if (state.currentView !== view) renderToken++;
   state.currentView = view;
   [
     [showMapViewBtn, view === "map"],
@@ -2414,8 +2452,7 @@ window.addEventListener("pintar:authenticated", (event) => {
   activeRoomPopup?.remove();
   activeRoomPopup = null;
   closeDetail();
-  applyDatabaseRecords([]);
-  updateDashboard();
+  applyDatabaseRecords([], [], { force: true });
   void renderCurrentView();
   TenantApi.init({
     onRecords: (records, diagnostics) => {
@@ -2434,8 +2471,7 @@ window.addEventListener("pintar:logged-out", () => {
   activeRoomPopup = null;
   closeDetail();
   if (appInitialized) {
-    applyDatabaseRecords([]);
-    updateDashboard();
+    applyDatabaseRecords([], [], { force: true });
   }
   mapLayoutEl.hidden = false;
   workspaceLayoutEl.hidden = false;

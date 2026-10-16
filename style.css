@@ -540,6 +540,7 @@ button { font: inherit; cursor: pointer; }
   stroke: #ffffff;
   stroke-width: 1px;
   vector-effect: non-scaling-stroke;
+  pointer-events: all;
   transition: fill-opacity 0.15s ease;
 }
 #map .room:hover { fill-opacity: 0.72; }
@@ -1115,6 +1116,16 @@ body {
   display: block;
   touch-action: none;
   cursor: grab;
+}
+
+#map > svg {
+  will-change: transform;
+}
+
+.is-dragging * {
+  pointer-events: none !important;
+  cursor: grabbing !important;
+  transition: none !important;
 }
 
 #map.dragging svg {

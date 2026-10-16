@@ -14,6 +14,12 @@ function generateFloorRooms(prefix, svgPrefix = prefix) {
 }
 
 /* L2 rooms (GKP_L2.svg: L2_R01 to L2_R17) */
+const L1_ROOMS = {};
+for (let i = 1; i <= 2; i++) {
+  const num = String(i).padStart(2, "0");
+  L1_ROOMS[`L1_R${num}`] = { status: "vacant" };
+}
+
 const L2_ROOMS = {};
 for (let i = 1; i <= 17; i++) {
   const num = String(i).padStart(2, "0");
@@ -34,8 +40,8 @@ const DATA = {
           name: "Lantai 1 (Dasar)",
           svg: "assets/gkp/GKP_L1.svg",
           planId: "UNIT_GKP_L1",
-          svgPrefix: "L1_", // TODO: update when L1 SVG gets room IDs
-          rooms: {},
+          svgPrefix: "L1_",
+          rooms: L1_ROOMS,
         },
         {
           id: "L2",
