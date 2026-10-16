@@ -13,7 +13,6 @@ const state = {
   buildingId: null,
   floorId: null,
   floorPickerOpen: false,
-  sidebarOpen: false,
   mapControlsOpen: false,
 };
 
@@ -22,6 +21,7 @@ const registry = new Map();
 let areaBasemap = null;
 let selectedBasemapId = "imagery";
 let lastDashboardBuildingId = null;
+let renderedFloorKey = null;
 
 /* ---------- ELEMEN HTML ---------- */
 const mapEl = document.getElementById("map");
@@ -31,11 +31,10 @@ const backBtn = document.getElementById("backBtn");
 const floorPickerEl = document.getElementById("floorPicker");
 const floorPickerTitleEl = document.getElementById("floorPickerTitle");
 const detailEl = document.getElementById("detail");
-const sidebarEl = document.getElementById("sidebar");
-const openSidebarBtn = document.getElementById("openSidebar");
+const detailPaymentEl = document.getElementById("dPaymentRows");
+const detailUtilitiesEl = document.getElementById("dUtilityRows");
 const sidebarMapControlsEl = document.getElementById("sidebarMapControls");
 const mapControlsSidebarEl = document.getElementById("mapControlsSidebar");
-const openMapControlsBtn = document.getElementById("openMapControls");
 const closeMapControlsBtn = document.getElementById("closeMapControls");
 const workspaceLayoutEl = document.getElementById("workspaceLayout");
 const summaryEl = document.getElementById("summary");
@@ -61,12 +60,11 @@ const installmentListEl = document.getElementById("installmentList");
 const installmentPaidTotalEl = document.getElementById("installmentPaidTotal");
 const installmentRemainingEl = document.getElementById("installmentRemaining");
 const partialPaymentEditorEl = document.getElementById("partialPaymentEditor");
-const billingPeriodLabelEl = document.getElementById("billingPeriodLabel");
 const initialPaymentInput = roomEditor.elements.namedItem("initial_payment_amount");
 const partialPaymentScheduleInput = roomEditor.elements.namedItem("partial_payment_schedule");
 const partialPaymentRemainingEl = document.getElementById("partialPaymentRemaining");
 const contractValueInput = roomEditor.elements.namedItem("contract_value");
-const paymentStatusInput = roomEditor.elements.namedItem("payment_status");
+const rentalSchemeInput = roomEditor.elements.namedItem("rental_invoice_scheme");
 const installmentIntervalInput = roomEditor.elements.namedItem("installment_interval_months");
 const startDateInput = roomEditor.elements.namedItem("start_date");
 const endDateInput = roomEditor.elements.namedItem("end_date");
@@ -80,8 +78,15 @@ const actionSuccessTitle = document.getElementById("actionSuccessTitle");
 const actionSuccessMessage = document.getElementById("actionSuccessMessage");
 const actionSuccessClose = document.getElementById("actionSuccessClose");
 const registerTenantBtn = document.getElementById("registerTenantBtn");
+const registerSelectedRoomBtn = document.getElementById("registerSelectedRoomBtn");
+const notificationButtonEl = document.getElementById("notificationButton");
+const notificationDropdownEl = document.getElementById("notificationDropdown");
+const notificationDotEl = document.getElementById("notificationDot");
+const markNotificationsReadBtn = document.getElementById("markNotificationsRead");
+const viewAllNotificationsBtn = document.getElementById("viewAllNotifications");
 const userAvatarEl = document.getElementById("userAvatar");
 const userLabelEl = document.getElementById("userLabel");
+const welcomeNameEl = document.getElementById("welcomeName");
 const mapLayoutEl = document.getElementById("mapLayout");
 const tenantTableViewEl = document.getElementById("tenantTableView");
 const clientPortalViewEl = document.getElementById("clientPortalView");
@@ -103,10 +108,36 @@ let toastTimer = null;
 let resolveActionConfirmation = null;
 let activeRoomPopup = null;
 
+function setNotificationOpen(isOpen) {
+  notificationDropdownEl.hidden = !isOpen;
+  notificationButtonEl.setAttribute("aria-expanded", String(isOpen));
+}
+
+notificationButtonEl.addEventListener("click", () => {
+  setNotificationOpen(notificationDropdownEl.hidden);
+});
+
+markNotificationsReadBtn.addEventListener("click", () => {
+  notificationDropdownEl
+    .querySelectorAll(".notification-item.is-unread")
+    .forEach((item) => item.classList.remove("is-unread"));
+  notificationDotEl.hidden = true;
+});
+
+viewAllNotificationsBtn.addEventListener("click", () => {
+  setNotificationOpen(false);
+});
+
+document.addEventListener("click", (event) => {
+  if (!notificationDropdownEl.hidden && !event.target.closest(".notification-menu")) {
+    setNotificationOpen(false);
+  }
+});
+
 function showActionSuccess(title, message) {
   actionSuccessTitle.textContent = title;
   actionSuccessMessage.textContent = message;
-  actionSuccessDialog.showModal();
+  showOverlayDialog(actionSuccessDialog);
   actionSuccessClose.focus();
 }
 
@@ -115,19 +146,18 @@ actionSuccessClose.addEventListener("click", () => actionSuccessDialog.close());
 function applyRole(user) {
   const isAdmin = user.role === "admin";
   const isClient = user.role === "client";
-  if (window.matchMedia("(max-width: 900px)").matches) {
-    state.sidebarOpen = false;
-  }
   registerTenantBtn.hidden = !isAdmin;
+  document.getElementById("clientAccountSwitcher").hidden = !isAdmin;
   showTenantTableBtn.hidden = isClient;
   showClientDataBtn.hidden = !isClient;
   editRoomBtn.hidden = !isAdmin;
   clearTenantBtn.hidden = true;
   userAvatarEl.textContent = user.displayName.slice(0, 1).toLocaleUpperCase("id-ID");
   userLabelEl.textContent = `${user.displayName} · ${user.role}`;
+  welcomeNameEl.textContent = user.displayName;
   workspaceLayoutEl.hidden = false;
   clientPortalViewEl.hidden = true;
-  invoicePageEl.hidden = true;
+  if (invoicePageEl.open) invoicePageEl.close();
   tenantTableViewEl.hidden = true;
   mapLayoutEl.hidden = false;
   setCurrentView("map");
@@ -165,6 +195,10 @@ const FLOOR_OPTIONS = [
   { id: "L1", label: "Lantai 1 (Dasar)" },
   { id: "L2", label: "Lantai 2" },
   { id: "L3", label: "Lantai 3" },
+  ...Array.from({ length: 7 }, (_, index) => {
+    const floorNumber = index + 4;
+    return { id: `L${floorNumber}`, label: `Lantai ${floorNumber}` };
+  }),
 ];
 
 const BASEMAP_OPTIONS = {
@@ -217,6 +251,9 @@ function showToast(message) {
 }
 
 function isUnpaid(room) {
+  if (room.utilityPayments?.some((payment) => payment.status === "MENUNGGAK")) {
+    return true;
+  }
   const payment = String(room.payment || "").trim().toLocaleLowerCase("id-ID");
   const balance = paymentBalance(room);
   if (balance !== null) return balance > 0;
@@ -456,17 +493,7 @@ function updateSidebarLayout() {
     state.currentView === "map" &&
     (state.view === "plan" || state.view === "unavailable");
   if (!showMapControls) state.mapControlsOpen = false;
-  sidebarEl.hidden = false;
   sidebarMapControlsEl.hidden = !showMapControls;
-  sidebarEl.classList.toggle("is-open", state.sidebarOpen);
-  sidebarEl.inert = !state.sidebarOpen;
-  openSidebarBtn.hidden = state.sidebarOpen;
-  openSidebarBtn.setAttribute("aria-expanded", String(state.sidebarOpen));
-  openMapControlsBtn.hidden = !showMapControls;
-  openMapControlsBtn.setAttribute(
-    "aria-expanded",
-    String(showMapControls && state.mapControlsOpen),
-  );
   mapControlsSidebarEl.classList.toggle(
     "is-open",
     showMapControls && state.mapControlsOpen,
@@ -485,10 +512,9 @@ function closeMapControls() {
   updateSidebarLayout();
 }
 
-function setSidebarOpen(isOpen) {
-  if (state.sidebarOpen === isOpen) return;
-  state.sidebarOpen = isOpen;
-  updateSidebarLayout();
+function showOverlayDialog(dialog) {
+  closeMapControls();
+  dialog.showModal();
 }
 
 function setSyncStatus(status, label, updatedAt) {
@@ -521,6 +547,8 @@ const MASTER_ROOM_FIELDS = {
   end_date: "end",
   outstanding_amount: "legacyOutstandingAmount",
   contract_value: "contractValue",
+  rental_invoice_scheme: "rentalInvoiceScheme",
+  separate_utility_invoices: "separateUtilityInvoices",
   billing_period: "billingPeriod",
   installment_interval_months: "installmentIntervalMonths",
   initial_payment_amount: "initialPaymentAmount",
@@ -567,6 +595,8 @@ function applyDatabaseRecords(records, endpointDiagnostics = [], { force = false
         room.tenant = "Tersedia";
         room.payment = "";
         room.installments = [];
+        room.utilityPayments = [];
+        room.invoices = [];
         room.contractId = "";
         Object.values(MASTER_ROOM_FIELDS).forEach((field) => delete room[field]);
       }),
@@ -627,6 +657,7 @@ function applyDatabaseRecords(records, endpointDiagnostics = [], { force = false
       occupancy === "vacant" ? "Tersedia" : record.tenant || "-";
     room.payment = record.payment_status || "";
     room.installments = record.installments || [];
+    room.utilityPayments = record.utility_payments || [];
     Object.entries(MASTER_ROOM_FIELDS).forEach(([source, target]) => {
       if (
         !Object.prototype.hasOwnProperty.call(record, source) ||
@@ -636,19 +667,22 @@ function applyDatabaseRecords(records, endpointDiagnostics = [], { force = false
       }
       const value = record[source];
       room[target] =
-        [
-          "area_m2",
-          "outstanding_amount",
-          "electricity_kwh",
-          "electricity_cost_rp",
-          "phone_cost_rp",
-          "contract_value",
-          "initial_payment_amount",
-          "installment_interval_months",
-        ].includes(source) && Number.isFinite(Number(value))
-          ? Number(value)
-          : value;
+        source === "separate_utility_invoices"
+          ? value !== false
+          : [
+            "area_m2",
+            "outstanding_amount",
+            "electricity_kwh",
+            "electricity_cost_rp",
+            "phone_cost_rp",
+            "contract_value",
+            "initial_payment_amount",
+            "installment_interval_months",
+          ].includes(source) && Number.isFinite(Number(value))
+            ? Number(value)
+            : value;
     });
+    room.invoices = record.invoices || [];
   });
 
   const diagnosticSignature = JSON.stringify(diagnostics);
@@ -719,8 +753,35 @@ const fmtDate = (s) =>
       })
     : "-";
 
+const formatDateIfValid = (value) => {
+  if (!value || String(value).trim() === "-") return "";
+  return Number.isNaN(new Date(value).getTime()) ? value : fmtDate(value);
+};
+
 const daysLeft = (end) =>
   end ? Math.ceil((new Date(end) - new Date()) / 86400000) : null;
+
+function contractMonthCount(start, end) {
+  if (!start || !end) return 0;
+  const startDate = new Date(`${start}T00:00:00`);
+  const endDate = new Date(`${end}T00:00:00`);
+  if (
+    Number.isNaN(startDate.getTime()) ||
+    Number.isNaN(endDate.getTime()) ||
+    endDate < startDate
+  ) return 0;
+  const monthDifference =
+    (endDate.getFullYear() - startDate.getFullYear()) * 12 +
+    endDate.getMonth() -
+    startDate.getMonth();
+  return Math.max(1, monthDifference + (endDate.getDate() > startDate.getDate() ? 1 : 0));
+}
+
+function totalContractRent(monthlyRent, start, end) {
+  const amount = numericAmount(monthlyRent);
+  const months = contractMonthCount(start, end);
+  return amount === null || !months ? null : amount * months;
+}
 
 function remainingText(end) {
   const days = daysLeft(end);
@@ -734,11 +795,22 @@ function remainingText(end) {
 // Cache menyimpan parsed SVGDocument (cloneable), bukan string
 const svgCache = new Map();
 
-async function loadSVG(file, token) {
+function rewriteSvgFloorIds(svg, { sourceFloorId, targetFloorId, targetPlanId }) {
+  const sourcePrefix = `${sourceFloorId}_`;
+  const targetPrefix = `${targetFloorId}_`;
+
+  svg.querySelectorAll("[id]").forEach((element) => {
+    if (element.id.startsWith(sourcePrefix)) {
+      element.id = `${targetPrefix}${element.id.slice(sourcePrefix.length)}`;
+    } else if (element.id === `UNIT_GKP_${sourceFloorId}`) {
+      element.id = targetPlanId;
+    }
+  });
+}
+
+async function loadSVG(file, token, templateFloorId = null, targetFloor = null) {
   if (!svgCache.has(file)) {
-    const requestUrl = new URL(file, document.baseURI);
-    requestUrl.searchParams.set("v", Date.now().toString());
-    const res = await fetch(requestUrl);
+    const res = await fetch(file);
     if (!res.ok) throw new Error("SVG tidak ditemukan: " + file);
     if (token !== renderToken) return false;
 
@@ -766,8 +838,16 @@ async function loadSVG(file, token) {
   if (token !== renderToken) return false;
 
   // Clone dari cache dan inject ke DOM (lebih cepat dari innerHTML + parse)
+  const svg = svgCache.get(file).cloneNode(true);
+  if (templateFloorId && targetFloor) {
+    rewriteSvgFloorIds(svg, {
+      sourceFloorId: templateFloorId,
+      targetFloorId: targetFloor.id,
+      targetPlanId: targetFloor.planId,
+    });
+  }
   mapEl.innerHTML = "";
-  mapEl.appendChild(svgCache.get(file).cloneNode(true));
+  mapEl.appendChild(svg);
   return true;
 }
 
@@ -775,6 +855,18 @@ async function loadSVG(file, token) {
 async function render() {
   const token = ++renderToken;
   document.body.dataset.view = state.view;
+  document.body.dataset.mapMode =
+    state.view === "plan" ? "FLOOR_VIEW" : "SITE_VIEW";
+  const nextFloorKey =
+    state.currentView === "map" && state.view === "plan"
+      ? `${state.buildingId}:${state.floorId}`
+      : null;
+  if (nextFloorKey && nextFloorKey !== renderedFloorKey) {
+    state.mapControlsOpen = true;
+  } else if (!nextFloorKey) {
+    state.mapControlsOpen = false;
+  }
+  renderedFloorKey = nextFloorKey;
   if (lastDashboardBuildingId !== state.buildingId) updateDashboard();
   updateNavigationSelectors();
   if (state.view !== "area" && areaBasemap) {
@@ -1049,7 +1141,7 @@ async function showFloorPlan(token) {
   const f = getFloor();
   if (!b || !f) throw new Error("Pilihan gedung atau lantai tidak valid.");
   titleEl.textContent = `${b.name} - ${f.name}`;
-  if (!(await loadSVG(f.svg, token))) return;
+  if (!(await loadSVG(f.svg, token, f.svgTemplateFloorId, f))) return;
   if (
     token !== renderToken ||
     state.view !== "plan" ||
@@ -1095,6 +1187,7 @@ async function showFloorPlan(token) {
     planId: f.planId,
     prefix: f.svgPrefix || f.id + "_",
     rooms: [...registry.values()].map((entry) => entry.el).filter(Boolean),
+    onZoomOutToSite: goBack,
   });
 }
 
@@ -1188,11 +1281,18 @@ function showRoomPopup(roomId, roomElement, event) {
 
   const payment = document.createElement("p");
   payment.className = "map-room-popup-payment";
-  payment.textContent = canViewTenant && room.payment && room.payment !== "-"
-    ? `Pembayaran: ${room.payment}`
-    : isClient && !canViewTenant && statusOf(room) !== "vacant"
-      ? "Ruang terisi"
-      : "Belum ada informasi pembayaran";
+  const hasOverdueUtility = room.utilityPayments?.some(
+    (item) => item.status === "MENUNGGAK",
+  );
+  if (canViewTenant && hasOverdueUtility) {
+    payment.textContent = "Tagihan listrik atau telepon menunggak";
+  } else if (canViewTenant && room.payment && room.payment !== "-") {
+    payment.textContent = `Pembayaran: ${room.payment}`;
+  } else if (isClient && !canViewTenant && statusOf(room) !== "vacant") {
+    payment.textContent = "Ruang terisi";
+  } else {
+    payment.textContent = "Belum ada informasi pembayaran";
+  }
 
   const detailsButton = document.createElement("button");
   detailsButton.className = "map-room-popup-details";
@@ -1240,7 +1340,7 @@ function confirmAction({ title, message, acceptLabel, variant = "primary" }) {
   actionConfirmMessage.textContent = message;
   actionConfirmAccept.textContent = acceptLabel;
   actionConfirmDialog.dataset.variant = variant;
-  actionConfirmDialog.showModal();
+  showOverlayDialog(actionConfirmDialog);
   actionConfirmCancel.focus();
   return new Promise((resolve) => {
     resolveActionConfirmation = resolve;
@@ -1351,6 +1451,283 @@ function addLabels(rooms = {}) {
   svg.appendChild(frag);
 }
 
+function utilityDateLabel(value, options) {
+  return new Intl.DateTimeFormat("id-ID", {
+    ...options,
+    timeZone: "UTC",
+  }).format(new Date(`${value}T00:00:00.000Z`));
+}
+
+function renderUtilitySchedule(room) {
+  const payments = Array.isArray(room.utilityPayments) ? room.utilityPayments : [];
+  const groups = [
+    ["LISTRIK", "Biaya Listrik"],
+    ["TELEPON", "Biaya Telepon"],
+  ];
+  const container = document.createElement("div");
+  container.className = "utility-schedule";
+
+  groups.forEach(([type, title]) => {
+    const items = payments.filter((payment) => payment.utility_type === type);
+    if (!items.length) return;
+
+    const group = document.createElement("details");
+    group.className = "utility-schedule-group";
+    group.open = true;
+    const summary = document.createElement("summary");
+    summary.textContent = title;
+    const list = document.createElement("div");
+    list.className = "utility-payment-list";
+
+    items.forEach((payment, index) => {
+      const row = document.createElement("article");
+      row.className = "utility-payment-row";
+      const copy = document.createElement("div");
+      copy.className = "utility-payment-copy";
+      const month = document.createElement("strong");
+      month.textContent =
+        `Bulan ${index + 1} · ${utilityDateLabel(payment.billing_month, {
+          month: "long",
+          year: "numeric",
+        })}`;
+      const due = document.createElement("span");
+      due.textContent =
+        `Jatuh tempo ${utilityDateLabel(payment.due_date, {
+          day: "numeric",
+          month: "short",
+          year: "numeric",
+        })}`;
+      const amount = document.createElement("b");
+      amount.textContent = fmtRupiah(Number(payment.amount));
+      copy.append(month, due, amount);
+
+      const actions = document.createElement("div");
+      actions.className = "utility-payment-actions";
+      const status = document.createElement("span");
+      const paymentStatus = payment.status || "BELUM_BAYAR";
+      status.className = `utility-payment-status ${
+        paymentStatus === "LUNAS"
+          ? "is-paid"
+          : paymentStatus === "MENUNGGAK"
+            ? "is-overdue"
+            : "is-pending"
+      }`;
+      status.textContent =
+        paymentStatus === "LUNAS"
+          ? "Lunas"
+          : paymentStatus === "MENUNGGAK"
+            ? "Menunggak"
+            : "Belum bayar";
+      actions.appendChild(status);
+
+      if (Auth.currentUser?.role === "admin") {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "utility-payment-toggle";
+        button.dataset.utilityPaymentId = payment.id;
+        button.dataset.utilityPaymentStatus = paymentStatus;
+        button.textContent = paymentStatus === "LUNAS" ? "Batalkan lunas" : "Tandai lunas";
+        actions.appendChild(button);
+      }
+
+      row.append(copy, actions);
+      list.appendChild(row);
+    });
+
+    group.append(summary, list);
+    container.appendChild(group);
+  });
+
+  if (!container.childElementCount) {
+    const empty = document.createElement("p");
+    empty.className = "detail-empty";
+    empty.textContent =
+      "Jadwal bulanan utilitas belum tersedia. Isi biaya utilitas dan rentang tanggal kontrak untuk membuat jadwal.";
+    container.appendChild(empty);
+  }
+
+  return container;
+}
+
+function renderContractInvoices(room) {
+  const invoices = Array.isArray(room.invoices) ? room.invoices : [];
+  const container = document.createElement("section");
+  container.className = "contract-invoices";
+
+  const heading = document.createElement("h3");
+  heading.textContent = "Pembayaran & Invoice";
+  container.appendChild(heading);
+
+  if (!invoices.length) {
+    const empty = document.createElement("p");
+    empty.className = "detail-empty";
+    empty.textContent = "Invoice belum dibuat. Periksa tanggal, tarif sewa, dan skema pembayaran kontrak.";
+    container.appendChild(empty);
+    return container;
+  }
+
+  const total = invoices.reduce((sum, invoice) => sum + Number(invoice.total_amount || 0), 0);
+  const paid = invoices.reduce((sum, invoice) => sum + Number(invoice.paid_amount || 0), 0);
+  const summary = document.createElement("div");
+  summary.className = "contract-invoice-summary";
+  [["Total tagihan", total], ["Total dibayar", paid], ["Sisa tagihan", total - paid]]
+    .forEach(([label, value]) => {
+      const item = document.createElement("div");
+      const term = document.createElement("span");
+      term.textContent = label;
+      const amount = document.createElement("strong");
+      amount.textContent = fmtRupiah(value);
+      item.append(term, amount);
+      summary.appendChild(item);
+    });
+  container.appendChild(summary);
+
+  const list = document.createElement("div");
+  list.className = "contract-invoice-list";
+  invoices.forEach((invoice) => {
+    const row = document.createElement("article");
+    row.className = "contract-invoice-row";
+    const header = document.createElement("div");
+    header.className = "contract-invoice-heading";
+    const invoiceName = document.createElement("strong");
+    invoiceName.textContent = invoice.invoice_id;
+    const category = document.createElement("span");
+    category.className = "contract-invoice-category";
+    category.textContent = invoice.category === "UTILITAS"
+      ? "Utilitas (Listrik & Telepon)"
+      : "Sewa Ruangan";
+    header.append(invoiceName, category);
+
+    const detail = document.createElement("p");
+    detail.textContent =
+      `${formatDateIfValid(invoice.period_start)} – ${formatDateIfValid(invoice.period_end)} · Jatuh tempo ${formatDateIfValid(invoice.due_date)}`;
+
+    const lines = document.createElement("div");
+    lines.className = "contract-invoice-lines";
+    [
+      ["Sewa", invoice.rent_amount],
+      ["Listrik", invoice.electricity_amount],
+      ["Telepon", invoice.telephone_amount],
+    ].filter(([, value]) => Number(value) > 0).forEach(([label, value]) => {
+      const line = document.createElement("span");
+      line.textContent = `${label}: ${fmtRupiah(Number(value))}`;
+      lines.appendChild(line);
+    });
+
+    const status = document.createElement("span");
+    status.className = `invoice-table-status ${
+      invoice.status === "LUNAS"
+        ? "is-paid"
+        : invoice.status === "SEBAGIAN"
+          ? "is-partial"
+          : invoice.status === "MENUNGGAK"
+            ? "is-overdue"
+            : "is-pending"
+    }`;
+    status.textContent = invoice.status === "LUNAS"
+      ? "Lunas"
+      : invoice.status === "SEBAGIAN"
+        ? "Sebagian"
+        : invoice.status === "MENUNGGAK"
+          ? "Menunggak"
+          : "Belum dibayar";
+    const totalAmount = document.createElement("strong");
+    totalAmount.className = "contract-invoice-total";
+    totalAmount.textContent =
+      `${fmtRupiah(Number(invoice.paid_amount || 0))} / ${fmtRupiah(Number(invoice.total_amount || 0))}`;
+    row.append(header, detail, lines, status, totalAmount);
+
+    if (Auth.currentUser?.role === "admin") {
+      const controls = document.createElement("div");
+      controls.className = "contract-invoice-controls";
+      const statusSelect = document.createElement("select");
+      statusSelect.setAttribute("aria-label", `Status ${invoice.invoice_id}`);
+      statusSelect.dataset.invoiceStatus = "";
+      [
+        ["LUNAS", "Lunas"],
+        ["BELUM_DIBAYAR", "Belum dibayar"],
+        ["SEBAGIAN", "Sebagian"],
+      ].forEach(([value, label]) => {
+        statusSelect.add(new Option(label, value));
+      });
+      statusSelect.value = invoice.recorded_status;
+      const paidAmount = document.createElement("input");
+      paidAmount.type = "number";
+      paidAmount.min = "0";
+      paidAmount.max = String(invoice.total_amount);
+      paidAmount.step = "1";
+      paidAmount.value = String(invoice.paid_amount || 0);
+      paidAmount.setAttribute("aria-label", `Nominal dibayar ${invoice.invoice_id}`);
+      paidAmount.dataset.invoicePaidAmount = "";
+      paidAmount.disabled = statusSelect.value !== "SEBAGIAN";
+      statusSelect.addEventListener("change", () => {
+        paidAmount.disabled = statusSelect.value !== "SEBAGIAN";
+        if (statusSelect.value === "LUNAS") paidAmount.value = String(invoice.total_amount);
+        if (statusSelect.value === "BELUM_DIBAYAR") paidAmount.value = "0";
+        if (statusSelect.value === "SEBAGIAN" && Number(paidAmount.value) <= 0) {
+          paidAmount.value = String(Math.floor(Number(invoice.total_amount) / 2));
+        }
+      });
+      const save = document.createElement("button");
+      save.type = "button";
+      save.className = "contract-invoice-save";
+      save.dataset.invoiceSave = invoice.id;
+      save.textContent = "Simpan status";
+      controls.append(statusSelect, paidAmount, save);
+      row.appendChild(controls);
+    }
+    list.appendChild(row);
+  });
+  container.appendChild(list);
+  return container;
+}
+
+detailPaymentEl.addEventListener("click", async (event) => {
+  const button = event.target.closest("[data-invoice-save]");
+  if (!button || Auth.currentUser?.role !== "admin") return;
+
+  const invoiceRow = button.closest(".contract-invoice-row");
+  const status = invoiceRow.querySelector("[data-invoice-status]").value;
+  const paidAmount = Number(invoiceRow.querySelector("[data-invoice-paid-amount]").value);
+  button.disabled = true;
+  try {
+    await TenantApi.updateInvoice(button.dataset.invoiceSave, status, paidAmount);
+    if (selectedRoomId) selectRoom(selectedRoomId, { allowVacant: true });
+    showToast("Status invoice dan saldo kontrak berhasil diperbarui.");
+  } catch (error) {
+    console.error("Pembaruan status invoice gagal:", error);
+    showToast(error.message || "Status invoice gagal diperbarui.");
+    button.disabled = false;
+  }
+});
+
+detailUtilitiesEl.addEventListener("click", async (event) => {
+  const button = event.target.closest("[data-utility-payment-id]");
+  if (!button || Auth.currentUser?.role !== "admin") return;
+
+  const paymentId = button.dataset.utilityPaymentId;
+  const currentStatus = button.dataset.utilityPaymentStatus;
+  const nextStatus = currentStatus === "LUNAS" ? "BELUM_BAYAR" : "LUNAS";
+  const confirmed = await confirmAction({
+    title: nextStatus === "LUNAS" ? "Tandai tagihan lunas?" : "Batalkan status lunas?",
+    message: nextStatus === "LUNAS"
+      ? "Status pembayaran utilitas bulan ini akan diperbarui menjadi lunas."
+      : "Tagihan akan kembali berstatus belum dibayar dan menjadi tunggakan jika sudah melewati jatuh tempo.",
+    acceptLabel: nextStatus === "LUNAS" ? "Ya, tandai lunas" : "Ya, batalkan",
+  });
+  if (!confirmed) return;
+
+  button.disabled = true;
+  try {
+    await TenantApi.updateUtilityPayment(paymentId, nextStatus);
+    showToast(nextStatus === "LUNAS" ? "Pembayaran utilitas ditandai lunas." : "Status pembayaran diperbarui.");
+  } catch (error) {
+    console.error("Pembaruan pembayaran utilitas gagal:", error);
+    showToast(error.message || "Status pembayaran utilitas gagal diperbarui.");
+    button.disabled = false;
+  }
+});
+
 /* ---------- TAHAP 4: DETAIL RUANG ---------- */
 function selectRoom(roomId, { allowVacant = false } = {}) {
   const room = getFloor()?.rooms[roomId];
@@ -1383,6 +1760,10 @@ function selectRoom(roomId, { allowVacant = false } = {}) {
   clearTenantBtn.hidden = !hasTenantData(room);
   editRoomBtn.hidden = user?.role !== "admin";
   clearTenantBtn.hidden = user?.role !== "admin" || !hasTenantData(room);
+  registerSelectedRoomBtn.hidden =
+    user?.role !== "admin" ||
+    state.view !== "plan" ||
+    statusOf(room) !== "vacant";
 
   showDetail(roomId);
 }
@@ -1415,11 +1796,6 @@ function showDetail(roomId) {
         : Number(String(value).replace(/[^\d.-]/g, ""));
     return Number.isFinite(amount) ? fmtRupiah(amount) : value;
   };
-  const formatDateIfValid = (value) => {
-    if (!hasValue(value)) return "";
-    return Number.isNaN(new Date(value).getTime()) ? value : fmtDate(value);
-  };
-
   addRow("payment", "Status pembayaran", room.payment);
   addRow(
     "payment",
@@ -1529,6 +1905,8 @@ function showDetail(roomId) {
       row.append(label, content);
       detailRows.appendChild(row);
     });
+    if (section === "payment") detailRows.appendChild(renderContractInvoices(room));
+    if (section === "utilities") detailRows.appendChild(renderUtilitySchedule(room));
   });
 
   detailEl.hidden = false;
@@ -1537,11 +1915,11 @@ function showDetail(roomId) {
 const EDITABLE_ROOM_FIELDS = [
   "tenant",
   "occupancy_status",
-  "payment_status",
   "start_date",
   "end_date",
   "contract_value",
-  "billing_period",
+  "rental_invoice_scheme",
+  "separate_utility_invoices",
   "installment_interval_months",
   "initial_payment_amount",
   "partial_payment_schedule",
@@ -1566,14 +1944,23 @@ function populateRoomEditor(
   editorStatusEl.textContent = "";
 
   const occupancy = statusOf(room);
+  const legacyPayment = String(room.payment || "").trim().toLocaleLowerCase("id-ID");
+  const storedScheme = String(room.rentalInvoiceScheme || "").toLocaleUpperCase("id-ID");
+  const rentalScheme = ["LUNAS", "TERMIN", "PARTIAL"].includes(storedScheme)
+    ? storedScheme
+    : storedScheme === "UPFRONT" || legacyPayment === "lunas"
+      ? "LUNAS"
+      : legacyPayment === "partial paid"
+        ? "PARTIAL"
+        : "TERMIN";
   const values = {
     tenant: isNew || occupancy === "vacant" || room.tenant === "Tersedia" ? "" : room.tenant || "",
     occupancy_status: isNew ? "occupied" : occupancy || "vacant",
-    payment_status: room.payment || "",
     start_date: dateInputValue(room.start),
     end_date: dateInputValue(room.end),
     contract_value: numericInputValue(room.contractValue),
-    billing_period: room.billingPeriod || "monthly",
+    rental_invoice_scheme: isNew ? "LUNAS" : rentalScheme,
+    separate_utility_invoices: room.separateUtilityInvoices !== false,
     installment_interval_months: room.installmentIntervalMonths || "6",
     initial_payment_amount: numericInputValue(room.initialPaymentAmount),
     partial_payment_schedule: room.partialPaymentSchedule || "",
@@ -1586,18 +1973,9 @@ function populateRoomEditor(
     notes: room.notes,
   };
 
-  const paymentSelect = roomEditor.elements.namedItem("payment_status");
-  const normalizedPayment = String(values.payment_status || "").trim().toLocaleLowerCase("id-ID");
-  values.payment_status = normalizedPayment === "partial paid" || normalizedPayment === "partially paid"
-    ? "Partial Paid"
-    : normalizedPayment === "termin"
-      ? "Termin"
-      : normalizedPayment === "lunas" || normalizedPayment === "paid"
-        ? "Lunas"
-        : "";
   if (
     values.initial_payment_amount === "" &&
-    ["partial paid", "partially paid"].includes(normalizedPayment) &&
+    legacyPayment === "partial paid" &&
     numericAmount(room.contractValue) !== null &&
     numericAmount(room.legacyOutstandingAmount) !== null
   ) {
@@ -1608,6 +1986,10 @@ function populateRoomEditor(
   EDITABLE_ROOM_FIELDS.forEach((field) => {
     const control = roomEditor.elements.namedItem(field);
     if (!control) return;
+    if (control.type === "checkbox") {
+      control.checked = Boolean(values[field]);
+      return;
+    }
     control.value = control.hasAttribute("data-currency")
       ? formatCurrencyInput(values[field])
       : values[field] ?? "";
@@ -1746,10 +2128,25 @@ function updateRegistrationTarget() {
   roomEditor.querySelector('[type="submit"]').textContent = "Daftarkan tenant";
 }
 
-function beginNewTenantRegistration() {
+function beginNewTenantRegistration(location = null) {
   const buildings = availableRegistrationBuildings();
   if (!buildings.length) {
     showToast("Belum ada gedung dan lantai dengan ruang terpetakan untuk pendaftaran.");
+    return;
+  }
+
+  const targetBuilding = location
+    ? buildings.find((building) => building.id === location.buildingId)
+    : null;
+  const targetFloor = targetBuilding?.floors.find(
+    (floor) => floor.id === location.floorId,
+  );
+  const targetRoom = targetFloor?.rooms[location.roomId];
+  if (
+    location &&
+    (!targetBuilding || !targetFloor || !targetRoom || statusOf(targetRoom) !== "vacant")
+  ) {
+    showToast("Unit ini tidak lagi tersedia untuk pendaftaran tenant.");
     return;
   }
 
@@ -1763,12 +2160,38 @@ function beginNewTenantRegistration() {
   registrationRoomEl.disabled = true;
   registrationContext = null;
   roomEditor.hidden = true;
+
+  if (location && targetBuilding && targetFloor && targetRoom) {
+    registrationBuildingEl.value = targetBuilding.id;
+    updateRegistrationFloors();
+    registrationFloorEl.value = targetFloor.id;
+    updateRegistrationRooms();
+    registrationRoomEl.value = location.roomId;
+    updateRegistrationTarget();
+    if (!registrationContext) {
+      showToast("Unit ini tidak dapat dipilih untuk pendaftaran tenant.");
+      return;
+    }
+  }
+
   newTenantFormHost.appendChild(roomEditor);
-  newTenantDialog.showModal();
-  registrationBuildingEl.focus();
+  showOverlayDialog(newTenantDialog);
+  if (location) {
+    roomEditor.elements.namedItem("tenant").focus();
+  } else {
+    registrationBuildingEl.focus();
+  }
 }
 
-registerTenantBtn.addEventListener("click", beginNewTenantRegistration);
+registerTenantBtn.addEventListener("click", () => beginNewTenantRegistration());
+registerSelectedRoomBtn.addEventListener("click", () => {
+  if (!selectedRoomId || state.view !== "plan") return;
+  beginNewTenantRegistration({
+    buildingId: state.buildingId,
+    floorId: state.floorId,
+    roomId: selectedRoomId,
+  });
+});
 registrationBuildingEl.addEventListener("change", updateRegistrationFloors);
 registrationFloorEl.addEventListener("change", updateRegistrationRooms);
 registrationRoomEl.addEventListener("change", updateRegistrationTarget);
@@ -1872,7 +2295,7 @@ function installmentCount(start, end, interval) {
 }
 
 function buildInstallmentSchedule(contractValue, start, end, interval, paidInstallments = []) {
-  const total = numericAmount(contractValue);
+  const total = totalContractRent(contractValue, start, end);
   const count = installmentCount(dateInputValue(start), dateInputValue(end), Number(interval));
   if (total === null || total <= 0 || !count) return [];
   const paidByTerm = new Map(
@@ -1923,7 +2346,7 @@ function renderInstallments(paidInstallments) {
     row.append(terms, label);
     installmentListEl.appendChild(row);
   });
-  if (!schedule.length && paymentStatusInput.value.toLocaleLowerCase("id-ID") === "termin") {
+  if (!schedule.length && rentalSchemeInput.value === "TERMIN") {
     const hint = document.createElement("p");
     hint.className = "detail-empty";
     hint.textContent = "Isi nilai kontrak dan rentang tanggal kontrak untuk membuat jadwal termin.";
@@ -1934,21 +2357,29 @@ function renderInstallments(paidInstallments) {
 
 function updateInstallmentSummary() {
   const paidTotal = readInstallments().reduce((total, item) => total + item.amount, 0);
-  const contractValue = numericInputValue(contractValueInput.value);
+  const contractValue = totalContractRent(
+    numericInputValue(contractValueInput.value),
+    startDateInput.value,
+    endDateInput.value,
+  );
   const remaining = Math.max((contractValue || 0) - paidTotal, 0);
   installmentPaidTotalEl.textContent = fmtRupiah(paidTotal);
   installmentRemainingEl.textContent = fmtRupiah(remaining);
   installmentRemainingEl.classList.toggle(
     "installment-overpaid",
-    contractValue !== "" && paidTotal > contractValue,
+    contractValue !== null && paidTotal > contractValue,
   );
 }
 
 function updatePartialPaymentSummary() {
-  const contractValue = numericInputValue(contractValueInput.value);
+  const contractValue = totalContractRent(
+    numericInputValue(contractValueInput.value),
+    startDateInput.value,
+    endDateInput.value,
+  );
   const initialPayment = numericInputValue(initialPaymentInput.value);
   partialPaymentRemainingEl.textContent =
-    contractValue === "" || initialPayment === ""
+    contractValue === null || initialPayment === ""
       ? "Isi nilai kontrak dan DP"
       : fmtRupiah(Math.max(contractValue - initialPayment, 0));
 }
@@ -1958,13 +2389,11 @@ function updateInstallmentSchedule() {
 }
 
 function updateInstallmentMode() {
-  const mode = paymentStatusInput.value.toLocaleLowerCase("id-ID");
-  const isInstallment = mode === "termin";
-  const isPartial = ["partial paid", "partial", "sebagian"].includes(mode);
-  const isPaidInFull = mode === "lunas";
+  const scheme = rentalSchemeInput.value;
+  const isInstallment = scheme === "TERMIN";
+  const isPartial = scheme === "PARTIAL";
   installmentEditorEl.hidden = !isInstallment;
   partialPaymentEditorEl.hidden = !isPartial;
-  billingPeriodLabelEl.hidden = !isPaidInFull;
   if (isInstallment) updateInstallmentSchedule();
   if (isPartial) updatePartialPaymentSummary();
 }
@@ -1990,10 +2419,16 @@ contractValueInput.addEventListener("input", () => {
   updateInstallmentSchedule();
   updatePartialPaymentSummary();
 });
-paymentStatusInput.addEventListener("change", updateInstallmentMode);
+rentalSchemeInput.addEventListener("change", updateInstallmentMode);
 installmentIntervalInput.addEventListener("change", updateInstallmentSchedule);
-startDateInput.addEventListener("change", updateInstallmentSchedule);
-endDateInput.addEventListener("change", updateInstallmentSchedule);
+startDateInput.addEventListener("change", () => {
+  updateInstallmentSchedule();
+  updatePartialPaymentSummary();
+});
+endDateInput.addEventListener("change", () => {
+  updateInstallmentSchedule();
+  updatePartialPaymentSummary();
+});
 initialPaymentInput.addEventListener("input", updatePartialPaymentSummary);
 
 roomEditor.querySelectorAll("[data-currency]").forEach((input) => {
@@ -2013,7 +2448,7 @@ editRoomBtn.addEventListener("click", () => {
   roomEditor.hidden = false;
   editorStatusEl.textContent = "";
   roomEditor.querySelector('[type="submit"]').textContent = "Simpan Perubahan";
-  roomEditorDialog.showModal();
+  showOverlayDialog(roomEditorDialog);
 });
 
 document.getElementById("cancelRoomEdit").addEventListener("click", () => {
@@ -2059,11 +2494,16 @@ roomEditor.addEventListener("submit", async (event) => {
   const installments = readInstallments();
   const contractValue = numericInputValue(contractValueInput.value);
   const totalPaid = installments.reduce((total, item) => total + item.amount, 0);
-  const paymentMode = paymentStatusInput.value.toLocaleLowerCase("id-ID");
-  if (!["lunas", "termin", "partial paid"].includes(paymentMode)) {
-    editorStatusEl.textContent = "Pilih skema pembayaran Lunas, Termin, atau Partial Paid.";
+  const rentalScheme = rentalSchemeInput.value;
+  const paymentMode = {
+    LUNAS: "lunas",
+    TERMIN: "termin",
+    PARTIAL: "partial",
+  }[rentalScheme];
+  if (!paymentMode) {
+    editorStatusEl.textContent = "Pilih skema pembayaran Lunas, Termin, atau Partial.";
     setActiveTab(document.getElementById("editorPaymentTab"));
-    paymentStatusInput.focus();
+    rentalSchemeInput.focus();
     return;
   }
   if (contractValue === "" || contractValue <= 0) {
@@ -2072,10 +2512,15 @@ roomEditor.addEventListener("submit", async (event) => {
     contractValueInput.focus();
     return;
   }
-  if (paymentMode === "lunas" && !["monthly", "yearly"].includes(roomEditor.elements.namedItem("billing_period").value)) {
-    editorStatusEl.textContent = "Pilih periode pembayaran Per-Bulan atau Per-Tahun.";
+  const totalContractAmount = totalContractRent(
+    contractValue,
+    startDateInput.value,
+    endDateInput.value,
+  );
+  if (totalContractAmount === null) {
+    editorStatusEl.textContent = "Isi rentang tanggal kontrak yang valid untuk membuat invoice.";
     setActiveTab(document.getElementById("editorPaymentTab"));
-    roomEditor.elements.namedItem("billing_period").focus();
+    startDateInput.focus();
     return;
   }
   if (paymentMode === "termin") {
@@ -2094,16 +2539,16 @@ roomEditor.addEventListener("submit", async (event) => {
       editorStatusEl.textContent = "Pembayaran termin melebihi jumlah jadwal yang dibuat.";
       return;
     }
-    if (totalPaid > contractValue) {
-      editorStatusEl.textContent = "Total nominal yang sudah dibayar tidak boleh melebihi nilai kontrak.";
+    if (totalPaid > totalContractAmount) {
+      editorStatusEl.textContent = "Total pembayaran termin tidak boleh melebihi total sewa kontrak.";
       setActiveTab(document.getElementById("editorPaymentTab"));
       return;
     }
   }
-  if (paymentMode === "partial paid") {
+  if (paymentMode === "partial") {
     const initialPayment = numericInputValue(initialPaymentInput.value);
-    if (initialPayment === "" || initialPayment <= 0 || initialPayment > contractValue) {
-      editorStatusEl.textContent = "Isi nominal DP lebih dari Rp0 dan tidak melebihi nilai kontrak.";
+    if (initialPayment === "" || initialPayment <= 0 || initialPayment > totalContractAmount) {
+      editorStatusEl.textContent = "Isi nominal DP lebih dari Rp0 dan tidak melebihi total sewa kontrak.";
       setActiveTab(document.getElementById("editorPaymentTab"));
       initialPaymentInput.focus();
       return;
@@ -2161,6 +2606,10 @@ roomEditor.addEventListener("submit", async (event) => {
     contract_id: isNewRegistration ? "" : floor.rooms[activeRoomId].contractId || "",
   };
   EDITABLE_ROOM_FIELDS.forEach((field) => {
+    if (field === "separate_utility_invoices") {
+      record[field] = roomEditor.elements.namedItem(field).checked;
+      return;
+    }
     const value = String(formData.get(field) || "").trim();
     record[field] = [
       "area_m2",
@@ -2179,22 +2628,28 @@ roomEditor.addEventListener("submit", async (event) => {
         ? numericInputValue(value)
       : value;
   });
-  record.billing_period = paymentMode === "lunas" ? record.billing_period : "";
+  record.payment_status = {
+    LUNAS: "Lunas",
+    TERMIN: "Termin",
+    PARTIAL: "Partial Paid",
+  }[rentalScheme];
   record.installment_interval_months =
     paymentMode === "termin" ? Number(installmentIntervalInput.value) : "";
   record.initial_payment_amount =
-    paymentMode === "partial paid" ? numericInputValue(initialPaymentInput.value) : "";
+    paymentMode === "partial" ? numericInputValue(initialPaymentInput.value) : "";
   record.partial_payment_schedule =
-    paymentMode === "partial paid" ? partialPaymentScheduleInput.value.trim() : "";
+    paymentMode === "partial" ? partialPaymentScheduleInput.value.trim() : "";
   if (isNewRegistration) record.occupancy_status = "occupied";
   record.installment_payments = JSON.stringify(paymentMode === "termin" ? installments : []);
 
   const saveButton = roomEditor.querySelector('[type="submit"]');
   saveButton.disabled = true;
   editorStatusEl.textContent = "Menyimpan dan memverifikasi perubahan...";
+  let clientAccount = null;
   try {
     if (isNewRegistration) {
-      await TenantApi.createContract(record, linkedRooms);
+      const result = await TenantApi.createContract(record, linkedRooms);
+      clientAccount = result.client_account;
       const createdAt = { ...registrationContext };
       newTenantDialog.close();
       state.buildingId = createdAt.buildingId;
@@ -2210,7 +2665,9 @@ roomEditor.addEventListener("submit", async (event) => {
     showActionSuccess(
       isNewRegistration ? "Tenant berhasil didaftarkan" : "Berhasil disimpan",
       isNewRegistration
-        ? "Tenant baru berhasil ditambahkan ke database."
+        ? clientAccount
+          ? `Tenant baru berhasil ditambahkan. Akun client: ${clientAccount.username} · Kata sandi demo: ${clientAccount.password}.`
+          : "Tenant baru berhasil ditambahkan ke database."
         : "Perubahan data unit berhasil disimpan ke database.",
     );
   } catch (error) {
@@ -2300,37 +2757,18 @@ function closeDetail() {
     .forEach((i) => i.classList.remove("active"));
 }
 document.getElementById("closeDetail").addEventListener("click", closeDetail);
-document.getElementById("collapseSidebar").addEventListener("click", () => {
-  setSidebarOpen(false);
-});
-openSidebarBtn.addEventListener("click", () => {
-  setSidebarOpen(true);
-});
-openMapControlsBtn.addEventListener("click", () => {
-  activeRoomPopup?.remove();
-  activeRoomPopup = null;
-  closeDetail();
-  state.mapControlsOpen = true;
-  updateSidebarLayout();
-});
 closeMapControlsBtn.addEventListener("click", () => {
   closeMapControls();
 });
-sidebarEl.addEventListener("click", () => {
-  setSidebarOpen(!state.sidebarOpen);
-});
-sidebarEl
-  .querySelector(".main-navigation")
-  .addEventListener("click", (event) => event.stopPropagation());
 document.addEventListener("keydown", (event) => {
-  if (event.key === "Escape" && state.mapControlsOpen) {
-    closeMapControls();
-    openMapControlsBtn.focus();
+  if (event.key === "Escape" && !notificationDropdownEl.hidden) {
+    setNotificationOpen(false);
+    notificationButtonEl.focus();
     return;
   }
-  if (event.key === "Escape" && state.sidebarOpen) {
-    setSidebarOpen(false);
-    openSidebarBtn.focus();
+  if (event.key === "Escape" && state.mapControlsOpen) {
+    closeMapControls();
+    return;
   }
 });
 document.querySelectorAll("[data-map-controls-tab]").forEach((tab) => {
@@ -2354,7 +2792,10 @@ document.querySelectorAll("[data-map-controls-tab]").forEach((tab) => {
   });
 });
 function setCurrentView(view) {
-  if (state.currentView !== view) renderToken++;
+  if (state.currentView !== view) {
+    renderToken++;
+    if (view !== "map") renderedFloorKey = null;
+  }
   state.currentView = view;
   [
     [showMapViewBtn, view === "map"],
@@ -2369,9 +2810,10 @@ function setCurrentView(view) {
 
 showMapViewBtn.addEventListener("click", () => {
   ClientPortal.closeInvoice();
+  workspaceLayoutEl.hidden = false;
   tenantTableViewEl.hidden = true;
   clientPortalViewEl.hidden = true;
-  invoicePageEl.hidden = true;
+  if (invoicePageEl.open) invoicePageEl.close();
   mapLayoutEl.hidden = false;
   document.body.dataset.view = state.view;
   setCurrentView("map");
@@ -2380,10 +2822,11 @@ showMapViewBtn.addEventListener("click", () => {
 showTenantTableBtn.addEventListener("click", () => {
   if (Auth.currentUser?.role === "client") return;
   ClientPortal.closeInvoice();
+  workspaceLayoutEl.hidden = false;
   mapLayoutEl.hidden = true;
   tenantTableViewEl.hidden = false;
   clientPortalViewEl.hidden = true;
-  invoicePageEl.hidden = true;
+  if (invoicePageEl.open) invoicePageEl.close();
   document.body.dataset.view = "tenants";
   setCurrentView("data");
   void TenantTable.refresh();
@@ -2391,10 +2834,11 @@ showTenantTableBtn.addEventListener("click", () => {
 showClientDataBtn.addEventListener("click", () => {
   if (Auth.currentUser?.role !== "client") return;
   ClientPortal.closeInvoice();
+  workspaceLayoutEl.hidden = true;
   mapLayoutEl.hidden = true;
   tenantTableViewEl.hidden = true;
   clientPortalViewEl.hidden = false;
-  invoicePageEl.hidden = true;
+  if (invoicePageEl.open) invoicePageEl.close();
   document.body.dataset.view = "client";
   setCurrentView("client");
   void ClientPortal.refresh();
@@ -2417,9 +2861,10 @@ document.addEventListener("pintar:open-room", async (event) => {
   state.floorId = floorData.id;
   state.view = "plan";
   setCurrentView("map");
+  workspaceLayoutEl.hidden = false;
   tenantTableViewEl.hidden = true;
   clientPortalViewEl.hidden = true;
-  invoicePageEl.hidden = true;
+  if (invoicePageEl.open) invoicePageEl.close();
   mapLayoutEl.hidden = false;
   await render();
   selectRoom(roomId);
@@ -2457,7 +2902,9 @@ window.addEventListener("pintar:authenticated", (event) => {
   TenantApi.init({
     onRecords: (records, diagnostics) => {
       applyDatabaseRecords(records, diagnostics);
-      if (user.role === "client") void ClientPortal.refresh();
+      if (user.role === "client" && !clientPortalViewEl.hidden) {
+        void ClientPortal.refresh();
+      }
     },
     onStatus: setSyncStatus,
   });
@@ -2477,7 +2924,7 @@ window.addEventListener("pintar:logged-out", () => {
   workspaceLayoutEl.hidden = false;
   tenantTableViewEl.hidden = true;
   clientPortalViewEl.hidden = true;
-  invoicePageEl.hidden = true;
+  if (invoicePageEl.open) invoicePageEl.close();
 });
 
 void Auth.restore();

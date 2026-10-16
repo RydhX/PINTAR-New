@@ -1,7 +1,17 @@
+CREATE TABLE IF NOT EXISTS tenants (
+  id UUID PRIMARY KEY,
+  name TEXT NOT NULL CHECK (length(name) <= 200),
+  name_key TEXT NOT NULL UNIQUE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 CREATE TABLE IF NOT EXISTS tenant_contracts (
   id UUID PRIMARY KEY,
+  tenant_id UUID REFERENCES tenants(id) ON DELETE SET NULL,
   tenant TEXT NOT NULL CHECK (length(tenant) <= 200),
   payment_status TEXT NOT NULL DEFAULT '',
+  rental_invoice_scheme TEXT NOT NULL DEFAULT 'LUNAS',
+  separate_utility_invoices BOOLEAN NOT NULL DEFAULT TRUE,
   start_date DATE,
   end_date DATE,
   contract_value NUMERIC(16, 2),
@@ -20,6 +30,135 @@ CREATE TABLE IF NOT EXISTS tenant_contracts (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+ALTER TABLE tenant_contracts
+  ADD COLUMN IF NOT EXISTS tenant_id UUID REFERENCES tenants(id) ON DELETE SET NULL;
+ALTER TABLE tenant_contracts
+  ADD COLUMN IF NOT EXISTS rental_invoice_scheme TEXT NOT NULL DEFAULT 'LUNAS',
+  ADD COLUMN IF NOT EXISTS separate_utility_invoices BOOLEAN NOT NULL DEFAULT TRUE;
+
+ALTER TABLE tenant_contracts
+  ALTER COLUMN rental_invoice_scheme SET DEFAULT 'LUNAS';
+ALTER TABLE tenant_contracts
+  DROP CONSTRAINT IF EXISTS tenant_contracts_rental_invoice_scheme_check;
+UPDATE tenant_contracts
+SET rental_invoice_scheme = CASE
+  WHEN payment_status = 'Partial Paid' THEN 'PARTIAL'
+  WHEN payment_status = 'Termin' THEN 'TERMIN'
+  WHEN payment_status = 'Lunas' THEN 'LUNAS'
+  WHEN rental_invoice_scheme = 'UPFRONT' THEN 'LUNAS'
+  ELSE 'TERMIN'
+END
+WHERE rental_invoice_scheme NOT IN ('LUNAS', 'TERMIN', 'PARTIAL');
+
+ALTER TABLE tenant_contracts
+  ADD CONSTRAINT tenant_contracts_rental_invoice_scheme_check
+    CHECK (rental_invoice_scheme IN ('LUNAS', 'TERMIN', 'PARTIAL'));
+
+INSERT INTO tenants (id, name, name_key)
+SELECT gen_random_uuid(), canonical.tenant, canonical.name_key
+FROM (
+  SELECT DISTINCT ON (lower(trim(tenant)))
+    trim(tenant) AS tenant,
+    lower(trim(tenant)) AS name_key
+  FROM tenant_contracts
+  WHERE length(trim(tenant)) > 0
+  ORDER BY lower(trim(tenant)), id
+) AS canonical
+ON CONFLICT (name_key) DO NOTHING;
+
+UPDATE tenant_contracts AS contract
+SET tenant_id = tenant.id
+FROM tenants AS tenant
+WHERE contract.tenant_id IS NULL
+  AND tenant.name_key = lower(trim(contract.tenant));
+
+CREATE TABLE IF NOT EXISTS client_users (
+  id UUID PRIMARY KEY,
+  tenant_id UUID NOT NULL UNIQUE REFERENCES tenants(id) ON DELETE CASCADE,
+  username TEXT NOT NULL UNIQUE,
+  password_hash TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS client_users_username_lower_idx
+  ON client_users (lower(username));
+
+CREATE TABLE IF NOT EXISTS utility_payments (
+  id UUID PRIMARY KEY,
+  contract_id UUID NOT NULL REFERENCES tenant_contracts(id) ON DELETE CASCADE,
+  utility_type TEXT NOT NULL CHECK (utility_type IN ('LISTRIK', 'TELEPON')),
+  billing_month DATE NOT NULL,
+  due_date DATE NOT NULL,
+  amount NUMERIC(16, 2) NOT NULL CHECK (amount >= 0),
+  status TEXT NOT NULL DEFAULT 'BELUM_BAYAR'
+    CHECK (status IN ('LUNAS', 'BELUM_BAYAR')),
+  paid_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (contract_id, utility_type, billing_month)
+);
+
+CREATE SEQUENCE IF NOT EXISTS invoice_number_seq;
+
+CREATE TABLE IF NOT EXISTS tenant_invoices (
+  id UUID PRIMARY KEY,
+  invoice_number TEXT NOT NULL UNIQUE,
+  tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  contract_id UUID NOT NULL REFERENCES tenant_contracts(id) ON DELETE CASCADE,
+  category TEXT NOT NULL DEFAULT 'SEWA'
+    CHECK (category IN ('SEWA', 'UTILITAS')),
+  billing_month DATE NOT NULL,
+  billing_date DATE NOT NULL,
+  due_date DATE NOT NULL,
+  period_start DATE NOT NULL,
+  period_end DATE NOT NULL,
+  rent_amount NUMERIC(16, 2) NOT NULL CHECK (rent_amount >= 0),
+  electricity_amount NUMERIC(16, 2) NOT NULL DEFAULT 0 CHECK (electricity_amount >= 0),
+  telephone_amount NUMERIC(16, 2) NOT NULL DEFAULT 0 CHECK (telephone_amount >= 0),
+  status TEXT NOT NULL DEFAULT 'BELUM_DIBAYAR'
+    CHECK (status IN ('LUNAS', 'BELUM_DIBAYAR', 'SEBAGIAN')),
+  paid_amount NUMERIC(16, 2) NOT NULL DEFAULT 0 CHECK (paid_amount >= 0),
+  paid_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+ALTER TABLE tenant_invoices
+  ADD COLUMN IF NOT EXISTS category TEXT NOT NULL DEFAULT 'SEWA',
+  ADD COLUMN IF NOT EXISTS period_start DATE,
+  ADD COLUMN IF NOT EXISTS period_end DATE,
+  ADD COLUMN IF NOT EXISTS paid_amount NUMERIC(16, 2) NOT NULL DEFAULT 0;
+UPDATE tenant_invoices
+SET period_start = COALESCE(period_start, billing_month),
+    period_end = COALESCE(period_end, billing_month),
+    paid_amount = CASE
+      WHEN status = 'LUNAS' AND paid_amount = 0
+        THEN rent_amount + electricity_amount + telephone_amount
+      ELSE paid_amount
+    END;
+ALTER TABLE tenant_invoices
+  ALTER COLUMN period_start SET NOT NULL,
+  ALTER COLUMN period_end SET NOT NULL;
+ALTER TABLE tenant_invoices
+  DROP CONSTRAINT IF EXISTS tenant_invoices_category_check;
+ALTER TABLE tenant_invoices
+  ADD CONSTRAINT tenant_invoices_category_check
+    CHECK (category IN ('SEWA', 'UTILITAS'));
+ALTER TABLE tenant_invoices
+  DROP CONSTRAINT IF EXISTS tenant_invoices_status_check;
+ALTER TABLE tenant_invoices
+  ADD CONSTRAINT tenant_invoices_status_check
+    CHECK (status IN ('LUNAS', 'BELUM_DIBAYAR', 'SEBAGIAN'));
+ALTER TABLE tenant_invoices
+  DROP CONSTRAINT IF EXISTS tenant_invoices_paid_amount_check;
+ALTER TABLE tenant_invoices
+  ADD CONSTRAINT tenant_invoices_paid_amount_check
+    CHECK (paid_amount >= 0 AND paid_amount <= rent_amount + electricity_amount + telephone_amount);
+ALTER TABLE tenant_invoices
+  DROP CONSTRAINT IF EXISTS tenant_invoices_contract_id_billing_month_key;
+CREATE UNIQUE INDEX IF NOT EXISTS tenant_invoices_contract_month_category_idx
+  ON tenant_invoices (contract_id, billing_month, category);
 
 CREATE TABLE IF NOT EXISTS contract_rooms (
   building TEXT NOT NULL,
@@ -42,3 +181,34 @@ CREATE INDEX IF NOT EXISTS tenant_contracts_electricity_kwh_idx
   ON tenant_contracts (electricity_kwh);
 CREATE INDEX IF NOT EXISTS contract_rooms_contract_id_idx
   ON contract_rooms (contract_id);
+CREATE INDEX IF NOT EXISTS utility_payments_contract_month_idx
+  ON utility_payments (contract_id, billing_month);
+CREATE INDEX IF NOT EXISTS tenant_invoices_tenant_month_idx
+  ON tenant_invoices (tenant_id, billing_month);
+
+INSERT INTO utility_payments (
+  id, contract_id, utility_type, billing_month, due_date, amount
+)
+SELECT
+  gen_random_uuid(),
+  contract.id,
+  utility.type,
+  period.billing_month::date,
+  (period.billing_month + INTERVAL '1 month')::date + 4,
+  utility.amount
+FROM tenant_contracts AS contract
+CROSS JOIN LATERAL generate_series(
+  date_trunc('month', contract.start_date)::date,
+  date_trunc('month', contract.end_date)::date,
+  INTERVAL '1 month'
+) AS period(billing_month)
+CROSS JOIN LATERAL (
+  VALUES
+    ('LISTRIK', contract.electricity_cost_rp),
+    ('TELEPON', contract.phone_cost_rp)
+) AS utility(type, amount)
+WHERE contract.start_date IS NOT NULL
+  AND contract.end_date IS NOT NULL
+  AND contract.end_date >= contract.start_date
+  AND utility.amount IS NOT NULL
+ON CONFLICT (contract_id, utility_type, billing_month) DO NOTHING;

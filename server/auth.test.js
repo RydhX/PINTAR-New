@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import {
+process.env.DATABASE_URL ??= "postgresql://pintar:pintar_dev@localhost:5433/pintar";
+const {
   authenticateCredentials,
   invoicesForUser,
-} from "./auth.js";
+} = await import("./auth.js");
 
 test("accepts only the configured mock login credentials", () => {
   assert.equal(authenticateCredentials("admin", "admin123")?.role, "admin");

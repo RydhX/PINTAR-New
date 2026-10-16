@@ -1,9 +1,13 @@
-import { randomUUID } from "node:crypto";
+import { randomUUID, randomBytes, scrypt as scryptCallback, timingSafeEqual } from "node:crypto";
+import { promisify } from "node:util";
 import { Router } from "express";
+import { pool } from "./db.js";
 
 export const authRouter = Router();
 
 const SESSION_TTL_MS = 8 * 60 * 60 * 1000;
+const scrypt = promisify(scryptCallback);
+export const CLIENT_DEFAULT_PASSWORD = "123456";
 const demoUsers = Object.freeze([
   {
     username: "admin",
@@ -33,7 +37,45 @@ function publicUser(user) {
     role: user.role,
     displayName: user.displayName,
     ...(user.tenantName ? { tenantName: user.tenantName } : {}),
+    ...(user.tenantId ? { tenantId: user.tenantId } : {}),
   };
+}
+
+export async function hashClientPassword(password) {
+  const salt = randomBytes(16);
+  const derivedKey = await scrypt(password, salt, 64);
+  return `scrypt$${salt.toString("base64")}$${derivedKey.toString("base64")}`;
+}
+
+async function verifyClientPassword(password, encodedHash) {
+  const [algorithm, saltValue, hashValue] = String(encodedHash).split("$");
+  if (algorithm !== "scrypt" || !saltValue || !hashValue) return false;
+  const salt = Buffer.from(saltValue, "base64");
+  const expected = Buffer.from(hashValue, "base64");
+  const actual = await scrypt(password, salt, expected.length);
+  return expected.length === actual.length && timingSafeEqual(expected, actual);
+}
+
+async function clientUserForCredentials(username, password) {
+  if (typeof username !== "string" || typeof password !== "string") return null;
+  const { rows } = await pool.query(
+    `SELECT client.id, client.username, client.password_hash, tenant.id AS tenant_id,
+      tenant.name AS tenant_name
+     FROM client_users client
+     JOIN tenants tenant ON tenant.id = client.tenant_id
+     WHERE lower(client.username) = lower($1)
+     LIMIT 1`,
+    [username.trim()],
+  );
+  const row = rows[0];
+  if (!row || !(await verifyClientPassword(password, row.password_hash))) return null;
+  return publicUser({
+    username: row.username,
+    role: "client",
+    displayName: `Client ${row.tenant_name}`,
+    tenantName: row.tenant_name,
+    tenantId: row.tenant_id,
+  });
 }
 
 function unauthorized(res) {
@@ -69,8 +111,10 @@ export function authenticateCredentials(username, password) {
   return user ? publicUser(user) : null;
 }
 
-authRouter.post("/login", (req, res) => {
-  const user = authenticateCredentials(req.body?.username, req.body?.password);
+authRouter.post("/login", async (req, res, next) => {
+  try {
+  const user = authenticateCredentials(req.body?.username, req.body?.password) ||
+    await clientUserForCredentials(req.body?.username, req.body?.password);
   if (!user) return res.status(401).json({ error: "Username atau password tidak sesuai." });
 
   const token = randomUUID();
@@ -79,6 +123,26 @@ authRouter.post("/login", (req, res) => {
     expiresAt: Date.now() + SESSION_TTL_MS,
   });
   res.json({ token, user });
+  } catch (error) {
+    next(error);
+  }
+});
+
+authRouter.get("/client-accounts", authenticate, allowRoles("admin"), async (_req, res, next) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT client.username, tenant.name AS tenant_name
+       FROM client_users client
+       JOIN tenants tenant ON tenant.id = client.tenant_id
+       ORDER BY tenant.name`,
+    );
+    res.json({ records: rows.map((row) => ({
+      username: row.username,
+      tenantName: row.tenant_name,
+    })) });
+  } catch (error) {
+    next(error);
+  }
 });
 
 authRouter.get("/me", authenticate, (req, res) => {

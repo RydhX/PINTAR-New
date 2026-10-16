@@ -7,6 +7,10 @@ const Auth = (() => {
   const logoutButton = document.getElementById("logoutButton");
   const userAvatar = document.getElementById("userAvatar");
   const userMenuDropdown = document.getElementById("userMenuDropdown");
+  const clientAccountSwitcher = document.getElementById("clientAccountSwitcher");
+  const clientAccountSelect = document.getElementById("clientAccountSelect");
+  const switchClientAccountButton = document.getElementById("switchClientAccount");
+  const clientAccountSwitcherStatus = document.getElementById("clientAccountSwitcherStatus");
   let session = null;
 
   function setUserMenuOpen(open) {
@@ -116,6 +120,59 @@ const Auth = (() => {
     showLogin();
   }
 
+  function expireSession(message = "Sesi berakhir. Silakan masuk kembali.") {
+    if (!session) return;
+    sessionStorage.removeItem(tokenKey);
+    session = null;
+    announce("pintar:logged-out");
+    showLogin(message);
+  }
+
+  async function refreshClientAccounts() {
+    clientAccountSwitcherStatus.textContent = "Memuat akun tenant…";
+    switchClientAccountButton.disabled = true;
+    try {
+      const response = await fetch("/api/auth/client-accounts", {
+        headers: headers(),
+        cache: "no-store",
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || "Tidak dapat memuat akun client.");
+
+      clientAccountSelect.replaceChildren(new Option("Pilih akun client", ""));
+      payload.records.forEach((record) => {
+        clientAccountSelect.add(new Option(
+          `${record.tenantName} · ${record.username}`,
+          record.username,
+        ));
+      });
+      clientAccountSwitcherStatus.textContent = payload.records.length
+        ? `Password demo: ${"123456"}`
+        : "Belum ada akun client tenant.";
+    } catch (error) {
+      clientAccountSwitcherStatus.textContent = error.message;
+      console.error("Gagal memuat akun demo client:", error);
+    }
+  }
+
+  async function switchToClient(username) {
+    if (typeof username !== "string" || !username) {
+      throw new Error("Pilih akun client tenant terlebih dahulu.");
+    }
+    const previousToken = session?.token;
+    await login(username, "123456");
+    setUserMenuOpen(false);
+    if (!previousToken) return;
+    const response = await fetch("/api/auth/logout", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${previousToken}` },
+      cache: "no-store",
+    });
+    if (!response.ok && response.status !== 401) {
+      throw new Error(`Sesi admin sebelumnya gagal ditutup (HTTP ${response.status}).`);
+    }
+  }
+
   loginForm.addEventListener("submit", async (event) => {
     event.preventDefault();
     const submitButton = loginForm.querySelector('[type="submit"]');
@@ -162,7 +219,22 @@ const Auth = (() => {
   });
 
   userAvatar.addEventListener("click", () => {
-    setUserMenuOpen(userMenuDropdown.hidden);
+    const open = userMenuDropdown.hidden;
+    setUserMenuOpen(open);
+    if (open && session?.user.role === "admin") void refreshClientAccounts();
+  });
+
+  clientAccountSelect.addEventListener("change", () => {
+    switchClientAccountButton.disabled = !clientAccountSelect.value;
+  });
+  switchClientAccountButton.addEventListener("click", () => {
+    switchClientAccountButton.disabled = true;
+    clientAccountSwitcherStatus.textContent = "Mengganti akun…";
+    void switchToClient(clientAccountSelect.value).catch((error) => {
+      clientAccountSwitcherStatus.textContent = error.message;
+      console.error("Gagal beralih ke akun client:", error);
+      switchClientAccountButton.disabled = !clientAccountSelect.value;
+    });
   });
 
   document.addEventListener("click", (event) => {
@@ -184,6 +256,8 @@ const Auth = (() => {
   return Object.freeze({
     restore,
     headers,
+    expireSession,
+    switchToClient,
     get currentUser() { return session?.user ?? null; },
   });
 })();

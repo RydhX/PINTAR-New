@@ -26,6 +26,20 @@ for (let i = 1; i <= 17; i++) {
   L2_ROOMS[`L2_R${num}`] = { status: "vacant" };
 }
 const L3_DATA = generateFloorRooms("L3");
+const TYPICAL_FLOORS = Array.from({ length: 7 }, (_, index) => {
+  const floorNumber = index + 4;
+  const floorId = `L${floorNumber}`;
+  const floorData = generateFloorRooms(floorId);
+  return {
+    id: floorId,
+    name: `Lantai ${floorNumber}`,
+    svg: "assets/gkp/GKP_L3.svg",
+    svgTemplateFloorId: "L3",
+    planId: `UNIT_GKP_${floorId}`,
+    svgPrefix: floorData.svgPrefix,
+    rooms: floorData.rooms,
+  };
+});
 
 const DATA = {
   buildings: [
@@ -59,6 +73,7 @@ const DATA = {
           svgPrefix: L3_DATA.svgPrefix,
           rooms: L3_DATA.rooms,
         },
+        ...TYPICAL_FLOORS,
       ],
     },
     {

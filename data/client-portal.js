@@ -3,7 +3,6 @@ const ClientPortal = (() => {
   const tenantEl = document.getElementById("clientPortalTenant");
   const detailsEl = document.getElementById("clientTenantDetails");
   const invoicesEl = document.getElementById("clientInvoiceRows");
-  const workspaceEl = document.getElementById("workspaceLayout");
   const invoicePageEl = document.getElementById("invoicePage");
   const invoiceItemRowsEl = document.getElementById("invoiceItemRows");
   const printButton = document.getElementById("invoicePrintButton");
@@ -25,6 +24,7 @@ const ClientPortal = (() => {
   let tenantRecords = [];
   let invoiceRecords = [];
   let lastInvoiceAction = null;
+  let refreshSequence = 0;
 
   function readAmount(value, label) {
     const amount = value == null ? 0 : Number(value);
@@ -53,6 +53,9 @@ const ClientPortal = (() => {
   }
 
   function invoiceTotal(invoice) {
+    if (invoice.rentAmountRp !== undefined) {
+      return readAmount(invoice.amountRp, "total tagihan");
+    }
     const records = recordsForInvoice();
     const utilitiesTotal = records.reduce(
       (total, record) =>
@@ -87,15 +90,22 @@ const ClientPortal = (() => {
     }
 
     const period = formatPeriod(invoice.period);
-    const rentAmount = readAmount(invoice.amountRp, "tagihan sewa");
-    const electricityAmount = associatedRecords.reduce(
-      (total, record) => total + readAmount(record.electricityCostRp, "listrik"),
-      0,
+    const rentAmount = readAmount(
+      invoice.rentAmountRp ?? invoice.amountRp,
+      "tagihan sewa",
     );
-    const phoneAmount = associatedRecords.reduce(
-      (total, record) => total + readAmount(record.phoneCostRp, "telepon"),
-      0,
-    );
+    const electricityAmount = invoice.electricityAmountRp === undefined
+      ? associatedRecords.reduce(
+        (total, record) => total + readAmount(record.electricityCostRp, "listrik"),
+        0,
+      )
+      : readAmount(invoice.electricityAmountRp, "listrik");
+    const phoneAmount = invoice.phoneAmountRp === undefined
+      ? associatedRecords.reduce(
+        (total, record) => total + readAmount(record.phoneCostRp, "telepon"),
+        0,
+      )
+      : readAmount(invoice.phoneAmountRp, "telepon");
     const electricityUsage = associatedRecords.reduce(
       (total, record) => total + readAmount(record.electricityKwh, "pemakaian listrik"),
       0,
@@ -104,40 +114,64 @@ const ClientPortal = (() => {
     const rooms = associatedRecords.flatMap((record) => record.rooms || []);
 
     invoiceItemRowsEl.replaceChildren();
-    addInvoiceItem(`Biaya sewa / angsuran kontrak — ${period}`, "1 periode", rentAmount);
-    addInvoiceItem(`Biaya listrik (${new Intl.NumberFormat("id-ID").format(electricityUsage)} kWh)`, "1 layanan", electricityAmount);
-    addInvoiceItem("Biaya telepon", "1 layanan", phoneAmount);
+    if (rentAmount > 0) {
+      addInvoiceItem(`Biaya sewa ruangan — ${period}`, "1 periode", rentAmount);
+    }
+    if (electricityAmount > 0) {
+      addInvoiceItem(
+        `Biaya listrik${electricityUsage ? ` (${new Intl.NumberFormat("id-ID").format(electricityUsage)} kWh)` : ""}`,
+        "1 layanan",
+        electricityAmount,
+      );
+    }
+    if (phoneAmount > 0) addInvoiceItem("Biaya telepon", "1 layanan", phoneAmount);
+    if (!invoiceItemRowsEl.childElementCount) {
+      addInvoiceItem("Tagihan", "1 item", invoiceTotal(invoice));
+    }
 
     setInvoiceText("invoiceNumber", invoice.invoiceId);
-    setInvoiceText("invoiceDate", dateFormatter.format(new Date()));
+    setInvoiceText(
+      "invoiceDate",
+      invoice.billingDate ? formatDate(invoice.billingDate) : dateFormatter.format(new Date()),
+    );
     setInvoiceText("invoiceDueDate", formatDate(invoice.dueDate));
     setInvoiceText("invoiceTenantName", tenant.tenantName || tenantName);
     setInvoiceText("invoiceTenantPic", tenant.pic ? `PIC: ${tenant.pic}` : "");
     setInvoiceText("invoiceTenantContact", tenant.contact ? `Kontak: ${tenant.contact}` : "");
     setInvoiceText("invoicePeriod", period);
-    setInvoiceText("invoiceRoomDetails", rooms.length ? `Lokasi / ruang: ${rooms.join(", ")}` : "");
-    setInvoiceText("invoiceStatus", invoice.status);
-    document.getElementById("invoiceStatus").classList.toggle(
-      "is-paid",
-      String(invoice.status).toLocaleLowerCase("id-ID") === "lunas",
+    setInvoiceText(
+      "invoiceCategory",
+      invoice.category === "UTILITAS" ? "Utilitas (Listrik & Telepon)" : "Sewa Ruangan",
     );
+    setInvoiceText("invoiceRoomDetails", rooms.length ? `Lokasi / ruang: ${rooms.join(", ")}` : "");
+    const normalizedStatus = String(invoice.status).toLocaleUpperCase("id-ID");
+    const invoiceStatusEl = document.getElementById("invoiceStatus");
+    setInvoiceText(
+      "invoiceStatus",
+      normalizedStatus === "LUNAS"
+        ? "Lunas"
+        : normalizedStatus === "SEBAGIAN"
+          ? "Sebagian"
+        : normalizedStatus === "MENUNGGAK"
+          ? "Menunggak"
+          : "Belum dibayar",
+    );
+    invoiceStatusEl.classList.toggle("is-paid", normalizedStatus === "LUNAS");
+    invoiceStatusEl.classList.toggle("is-overdue", normalizedStatus === "MENUNGGAK");
+    invoiceStatusEl.classList.toggle("is-partial", normalizedStatus === "SEBAGIAN");
     setInvoiceText("invoiceSubtotal", currency.format(subtotal));
     setInvoiceText("invoiceTax", currency.format(0));
     setInvoiceText("invoiceGrandTotal", currency.format(subtotal));
 
     lastInvoiceAction = actionButton;
-    workspaceEl.hidden = true;
-    document.getElementById("clientPortalView").hidden = true;
-    invoicePageEl.hidden = false;
     invoicePageEl.scrollTop = 0;
+    invoicePageEl.showModal();
     window.scrollTo({ top: 0, behavior: "auto" });
     document.getElementById("invoiceBackButton").focus();
   }
 
   function closeInvoice() {
-    workspaceEl.hidden = false;
-    invoicePageEl.hidden = true;
-    document.getElementById("clientPortalView").hidden = false;
+    if (invoicePageEl.open) invoicePageEl.close();
     document.body.classList.remove("printing-invoice");
     if (lastInvoiceAction?.isConnected) lastInvoiceAction.focus();
   }
@@ -160,6 +194,10 @@ const ClientPortal = (() => {
   });
 
   backButton.addEventListener("click", closeInvoice);
+  invoicePageEl.addEventListener("cancel", (event) => {
+    event.preventDefault();
+    closeInvoice();
+  });
   printButton.addEventListener("click", () => {
     document.body.classList.add("printing-invoice");
     window.print();
@@ -168,7 +206,7 @@ const ClientPortal = (() => {
     document.body.classList.remove("printing-invoice");
   });
 
-  function addDetail(label, value) {
+  function addDetail(parent, label, value) {
     if (value === null || value === undefined || value === "") return;
     const item = document.createElement("div");
     const term = document.createElement("span");
@@ -176,10 +214,12 @@ const ClientPortal = (() => {
     const description = document.createElement("strong");
     description.textContent = String(value);
     item.append(term, description);
-    detailsEl.appendChild(item);
+    parent.appendChild(item);
   }
 
   async function refresh() {
+    const sequence = ++refreshSequence;
+    const requestedUser = Auth.currentUser;
     statusEl.textContent = "Memuat data akun…";
     statusEl.className = "tenant-table-status is-loading";
     detailsEl.replaceChildren();
@@ -198,38 +238,69 @@ const ClientPortal = (() => {
       ]);
       if (!tenantResponse.ok) throw new Error(tenantPayload.error || "Gagal memuat data tenant.");
       if (!invoiceResponse.ok) throw new Error(invoicePayload.error || "Gagal memuat invoice.");
+      if (
+        sequence !== refreshSequence ||
+        Auth.currentUser?.username !== requestedUser?.username
+      ) return;
 
-      const user = Auth.currentUser;
+      const user = requestedUser;
       tenantRecords = tenantPayload.records;
       invoiceRecords = invoicePayload.records;
       tenantEl.textContent = user?.tenantName ? `Akun terhubung ke ${user.tenantName}` : "";
       tenantPayload.records.forEach((record) => {
-        addDetail("Nama tenant", record.tenantName);
-        addDetail("PIC", record.pic);
-        addDetail("Kontak client", record.contact);
-        addDetail("Ruang", record.rooms.join(", "));
-        addDetail("Status pembayaran", record.paymentScheme);
-        addDetail("Tanggal mulai", record.startDate);
-        addDetail("Tanggal akhir", record.endDate);
-        addDetail("Nilai kontrak", record.contractValue == null ? null : currency.format(record.contractValue));
-        addDetail("Biaya listrik", record.electricityCostRp == null ? null : currency.format(record.electricityCostRp));
-        addDetail("Pemakaian listrik", record.electricityKwh == null ? null : `${record.electricityKwh} kWh`);
-        addDetail("Biaya telepon", record.phoneCostRp == null ? null : currency.format(record.phoneCostRp));
-        addDetail("Catatan", record.notes);
+        const card = document.createElement("article");
+        card.className = "client-tenant-card";
+        const heading = document.createElement("h3");
+        heading.textContent = record.tenantName;
+        card.appendChild(heading);
+        addDetail(card, "PIC", record.pic);
+        addDetail(card, "Kontak client", record.contact);
+        addDetail(card, "Ruang", record.rooms.join(", "));
+        addDetail(card, "Status pembayaran", record.paymentScheme);
+        addDetail(card, "Tanggal mulai", record.startDate);
+        addDetail(card, "Tanggal akhir", record.endDate);
+        addDetail(card, "Nilai kontrak", record.contractValue == null ? null : currency.format(record.contractValue));
+        addDetail(card, "Biaya listrik / bulan", record.electricityCostRp == null ? null : currency.format(record.electricityCostRp));
+        addDetail(card, "Pemakaian listrik", record.electricityKwh == null ? null : `${record.electricityKwh} kWh`);
+        addDetail(card, "Biaya telepon / bulan", record.phoneCostRp == null ? null : currency.format(record.phoneCostRp));
+        addDetail(card, "Catatan", record.notes);
+        detailsEl.appendChild(card);
       });
       invoicePayload.records.forEach((invoice) => {
         const row = document.createElement("tr");
         [
           invoice.invoiceId,
-          invoice.period,
-          invoice.dueDate,
+          invoice.category === "UTILITAS" ? "Utilitas (Listrik & Telepon)" : "Sewa Ruangan",
+          formatPeriod(invoice.period),
+          formatDate(invoice.dueDate),
           currency.format(invoiceTotal(invoice)),
-          invoice.status,
-        ].forEach((value) => {
+        ]
+          .forEach((value) => {
           const cell = document.createElement("td");
           cell.textContent = value;
           row.appendChild(cell);
         });
+        const statusCell = document.createElement("td");
+        const statusBadge = document.createElement("span");
+        const normalizedStatus = String(invoice.status).toLocaleUpperCase("id-ID");
+        statusBadge.className = `invoice-table-status ${
+          normalizedStatus === "LUNAS"
+            ? "is-paid"
+            : normalizedStatus === "MENUNGGAK"
+              ? "is-overdue"
+              : normalizedStatus === "SEBAGIAN"
+                ? "is-partial"
+              : "is-pending"
+        }`;
+        statusBadge.textContent = normalizedStatus === "LUNAS"
+          ? "Lunas"
+          : normalizedStatus === "MENUNGGAK"
+            ? "Menunggak"
+            : normalizedStatus === "SEBAGIAN"
+              ? "Sebagian"
+            : "Belum dibayar";
+        statusCell.appendChild(statusBadge);
+        row.appendChild(statusCell);
         const actionCell = document.createElement("td");
         const actionButton = document.createElement("button");
         actionButton.type = "button";
@@ -253,12 +324,16 @@ const ClientPortal = (() => {
       if (!invoicePayload.records.length) {
         const row = document.createElement("tr");
         const cell = document.createElement("td");
-        cell.colSpan = 6;
+        cell.colSpan = 7;
         cell.textContent = "Belum ada invoice.";
         row.appendChild(cell);
         invoicesEl.appendChild(row);
       }
     } catch (error) {
+      if (
+        sequence !== refreshSequence ||
+        Auth.currentUser?.username !== requestedUser?.username
+      ) return;
       statusEl.textContent = `Gagal memuat portal client: ${error.message}`;
       statusEl.className = "tenant-table-status is-error";
     }

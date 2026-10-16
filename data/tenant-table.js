@@ -1,4 +1,5 @@
 const TenantTable = (() => {
+  let xlsxLoadPromise = null;
   const state = {
     page: 1,
     pageSize: 25,
@@ -26,6 +27,32 @@ const TenantTable = (() => {
     contractValue: 100_000_000,
     remainingBalance: 30_000_000,
   };
+
+  function loadXlsx() {
+    if (globalThis.XLSX) return Promise.resolve();
+    if (!xlsxLoadPromise) {
+      xlsxLoadPromise = new Promise((resolve, reject) => {
+        const script = document.createElement("script");
+        script.src = "https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js";
+        script.async = true;
+        script.onload = () => {
+          if (globalThis.XLSX) {
+            resolve();
+          } else {
+            xlsxLoadPromise = null;
+            reject(new Error("Library XLSX gagal diinisialisasi."));
+          }
+        };
+        script.onerror = () => {
+          script.remove();
+          xlsxLoadPromise = null;
+          reject(new Error("Library XLSX tidak dapat dimuat. Periksa koneksi internet."));
+        };
+        document.head.appendChild(script);
+      });
+    }
+    return xlsxLoadPromise;
+  }
 
   function addCell(row, value) {
     const cell = document.createElement("td");
@@ -226,7 +253,7 @@ const TenantTable = (() => {
   }
 
   async function exportXlsx() {
-    if (!globalThis.XLSX) throw new Error("Library XLSX belum berhasil dimuat.");
+    await loadXlsx();
     const records = await getAllFilteredRecords();
     const headers = [
       "Nama Tenant", "Kontak Client", "Skema Pembayaran", "Nilai Kontrak (Rp)",

@@ -30,9 +30,26 @@ test("normalizes numeric and installment contract input", () => {
   assert.equal(contract.electricity_cost_rp, 1250000);
   assert.equal(contract.electricity_kwh, 480.5);
   assert.equal(contract.start_date, "2026-01-31");
+  assert.equal(contract.rental_invoice_scheme, "LUNAS");
+  assert.equal(contract.payment_status, "Lunas");
+  assert.equal(contract.separate_utility_invoices, true);
   assert.deepEqual(JSON.parse(contract.installment_payments), [
     { term: 1, amount: 250000 },
   ]);
+});
+
+test("normalizes the three rental invoice schemes and utility separation", () => {
+  const contract = normalizeContract(validContract({
+    rental_invoice_scheme: "TERMIN",
+    installment_interval_months: 3,
+    start_date: "2026-01-01",
+    end_date: "2026-12-31",
+    separate_utility_invoices: false,
+  }));
+
+  assert.equal(contract.rental_invoice_scheme, "TERMIN");
+  assert.equal(contract.payment_status, "Termin");
+  assert.equal(contract.separate_utility_invoices, false);
 });
 
 test("rejects invalid calendar dates and payment states", () => {
@@ -41,13 +58,21 @@ test("rejects invalid calendar dates and payment states", () => {
     /valid calendar date/,
   );
   assert.throws(
-    () => normalizeContract(validContract({ payment_status: "Unknown" })),
-    /Skema pembayaran/,
+    () => normalizeContract(validContract({ rental_invoice_scheme: "WEEKLY" })),
+    /Skema invoice sewa/,
+  );
+  assert.throws(
+    () => normalizeContract(validContract({ separate_utility_invoices: "false" })),
+    /must be a boolean/,
   );
   assert.throws(
     () => normalizeContract(validContract({
+      rental_invoice_scheme: "TERMIN",
+      start_date: "2026-01-01",
+      end_date: "2026-12-31",
+      installment_interval_months: 1,
       contract_value: 300000,
-      installment_payments: '[{"term":1,"amount":250000},{"term":2,"amount":100000}]',
+      installment_payments: '[{"term":1,"amount":2500000},{"term":2,"amount":1200000}]',
     })),
     /melebihi nilai kontrak/,
   );
@@ -56,6 +81,41 @@ test("rejects invalid calendar dates and payment states", () => {
       installment_payments: '[{"term":1,"amount":100000},{"term":1,"amount":100000}]',
     })),
     /duplicated/,
+  );
+  assert.throws(
+    () => normalizeContract(validContract({
+      start_date: "2026-03-01",
+      end_date: "2026-02-28",
+    })),
+    /on or after start_date/,
+  );
+  assert.equal(
+    normalizeContract(validContract({ payment_status: "Unknown" })).payment_status,
+    "Lunas",
+  );
+});
+
+test("validates Partial down payment against full contract rent", () => {
+  const contract = normalizeContract(validContract({
+    rental_invoice_scheme: "PARTIAL",
+    start_date: "2026-11-01",
+    end_date: "2029-11-01",
+    contract_value: 150000000,
+    initial_payment_amount: 500000000,
+    partial_payment_schedule: "Sisa dibayar dalam dua termin.",
+  }));
+  assert.equal(contract.payment_status, "Partial Paid");
+  assert.equal(contract.initial_payment_amount, 500000000);
+  assert.throws(
+    () => normalizeContract(validContract({
+      rental_invoice_scheme: "PARTIAL",
+      start_date: "2026-11-01",
+      end_date: "2029-11-01",
+      contract_value: 150000000,
+      initial_payment_amount: 5400000001,
+      partial_payment_schedule: "Jadwal pelunasan.",
+    })),
+    /tidak melebihi total sewa kontrak/,
   );
 });
 

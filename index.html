@@ -20,7 +20,7 @@
     <link rel="stylesheet" href="style.css" />
   </head>
 
-  <body data-view="area">
+  <body data-view="area" data-map-mode="SITE_VIEW">
     <dialog id="loginDialog" class="login-dialog" aria-labelledby="loginHeading">
       <div class="login-background" aria-hidden="true">
         <div class="login-background-image"></div>
@@ -90,16 +90,74 @@
       <div class="brand">
         <img class="logo" src="assets/logo_pt_inti.svg" alt="Logo INTI" />
       </div>
-      <div class="topbar-navigation">
-        <button id="backBtn" hidden>← Kembali</button>
-      </div>
-      <div class="topbar-actions">
-        <button id="registerTenantBtn" class="register-tenant-button" type="button">+ Daftar Tenant Baru</button>
-        <button class="notification-button" type="button" aria-label="Notifikasi">
-          <svg class="notification-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M18 9a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/></svg>
-          <span class="notification-dot" aria-hidden="true"></span>
+      <nav id="topbarNavigation" class="topbar-navigation" aria-label="Navigasi utama">
+        <button id="showMapView" class="view-switch-button nav-item is-active" type="button" aria-label="Peta" aria-current="page">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m3 6 6-3 6 3 6-3v15l-6 3-6-3-6 3V6Z"/><path d="M9 3v15m6-12v15"/></svg>
+          <span>Denah</span>
         </button>
+        <button id="showTenantTable" class="view-switch-button nav-item" type="button" aria-label="Data Tenant" aria-current="false">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 10h18M9 4v16m6-10v10"/></svg>
+          <span>Data Tenant</span>
+        </button>
+        <button id="showClientData" class="view-switch-button nav-item" type="button" aria-label="Data Saya dan Invoice" aria-current="false" hidden>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h16v16H4z"/><path d="M8 8h8m-8 4h8m-8 4h5"/></svg>
+          <span>Data Saya &amp; Invoice</span>
+        </button>
+      </nav>
+      <div class="topbar-actions">
+        <div class="notification-menu">
+          <button
+            id="notificationButton"
+            class="notification-button"
+            type="button"
+            aria-label="Notifikasi"
+            aria-expanded="false"
+            aria-controls="notificationDropdown"
+          >
+            <svg class="notification-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M18 9a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/></svg>
+            <span id="notificationDot" class="notification-dot" aria-hidden="true"></span>
+          </button>
+          <section id="notificationDropdown" class="notification-dropdown" aria-label="Notifikasi" hidden>
+            <header class="notification-dropdown-header">
+              <h2>Notifikasi</h2>
+              <button id="markNotificationsRead" type="button">Tandai dibaca</button>
+            </header>
+            <ul class="notification-list">
+              <li class="notification-item is-unread">
+                <span class="notification-item-icon notification-warning" aria-hidden="true">
+                  <svg viewBox="0 0 24 24"><path d="M12 3 2.8 20h18.4L12 3Z"/><path d="M12 9v5m0 3h.01"/></svg>
+                </span>
+                <span class="notification-item-copy">
+                  <strong>Sewa Ruang L3_R02 Hampir Habis</strong>
+                  <time>10 menit lalu</time>
+                </span>
+              </li>
+              <li class="notification-item is-unread">
+                <span class="notification-item-icon notification-success" aria-hidden="true">
+                  <svg viewBox="0 0 24 24"><path d="m5 12 4 4L19 6"/></svg>
+                </span>
+                <span class="notification-item-copy">
+                  <strong>Pembayaran Lunas - Tenant PT INTI</strong>
+                  <time>1 jam lalu</time>
+                </span>
+              </li>
+              <li class="notification-item is-unread">
+                <span class="notification-item-icon notification-info" aria-hidden="true">
+                  <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v5m0-8h.01"/></svg>
+                </span>
+                <span class="notification-item-copy">
+                  <strong>Update Sistem Monitoring - Database Terhubung</strong>
+                  <time>Hari ini</time>
+                </span>
+              </li>
+            </ul>
+            <footer class="notification-dropdown-footer">
+              <button id="viewAllNotifications" type="button">Lihat Semua Notifikasi</button>
+            </footer>
+          </section>
+        </div>
         <div class="user-menu">
+          <span class="topbar-welcome">Welcome, <strong id="welcomeName">Admin</strong></span>
           <button
             id="userAvatar"
             class="admin-avatar"
@@ -110,67 +168,29 @@
           >?</button>
           <div id="userMenuDropdown" class="user-menu-dropdown" hidden>
             <span id="userLabel" class="user-menu-label">Belum login</span>
+            <section id="clientAccountSwitcher" class="client-account-switcher" hidden>
+              <label for="clientAccountSelect">Akun demo tenant</label>
+              <select id="clientAccountSelect">
+                <option value="">Pilih akun client</option>
+              </select>
+              <button id="switchClientAccount" type="button" disabled>Masuk sebagai client</button>
+              <p id="clientAccountSwitcherStatus" role="status" aria-live="polite"></p>
+            </section>
             <button id="logoutButton" class="user-menu-logout" type="button">Keluar</button>
           </div>
         </div>
       </div>
     </header>
 
-    <button
-      id="openSidebar"
-      class="sidebar-open-button"
-      type="button"
-      aria-label="Buka menu utama"
-      aria-controls="sidebar"
-      aria-expanded="false"
-    >
-      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
-    </button>
-
     <div id="workspaceLayout" class="workspace-layout">
-      <aside id="sidebar" class="sidebar" hidden>
-        <nav class="main-navigation" aria-label="Menu utama">
-          <div class="main-navigation-heading">
-            <span>Menu Utama</span>
-            <button
-              id="collapseSidebar"
-              class="sidebar-collapse-button"
-              type="button"
-              aria-label="Ciutkan sidebar"
-              title="Ciutkan sidebar"
-            >×</button>
-          </div>
-          <div id="sidebarNavigation" class="main-navigation-items">
-            <button id="showMapView" class="view-switch-button nav-item is-active" type="button" aria-label="Peta" aria-current="page">
-              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m3 6 6-3 6 3 6-3v15l-6 3-6-3-6 3V6Z"/><path d="M9 3v15m6-12v15"/></svg>
-              <span>Peta</span>
-            </button>
-            <button
-              id="openMapControls"
-              class="nav-item map-controls-trigger"
-              type="button"
-              aria-label="Filter dan kontrol peta"
-              aria-controls="mapControlsSidebar"
-              aria-expanded="false"
-              hidden
-            >
-              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16l-6.5 7.5v5l-3 1v-6L4 5Z"/></svg>
-              <span>Filter &amp; Kontrol</span>
-            </button>
-            <button id="showTenantTable" class="view-switch-button nav-item" type="button" aria-label="Data Tenant" aria-current="false">
-              <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 10h18M9 4v16m6-10v10"/></svg>
-              <span>Data Tenant</span>
-            </button>
-            <button id="showClientData" class="view-switch-button nav-item" type="button" aria-label="Data Saya dan Invoice" aria-current="false" hidden>
-              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h16v16H4z"/><path d="M8 8h8m-8 4h8m-8 4h5"/></svg>
-              <span>Data Saya &amp; Invoice</span>
-            </button>
-          </div>
-        </nav>
-      </aside>
-
       <main id="mapLayout" class="layout">
         <div class="stage">
+          <button id="backBtn" class="map-back-button" type="button" hidden>
+            <svg class="map-back-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <path d="M19 12H5m0 0 7-7m-7 7 7 7" />
+            </svg>
+            <span>Kembali</span>
+          </button>
           <div class="map-bottom-left-stack">
             <section class="landing-overview map-monitor-panel" aria-label="Ringkasan status ruang">
               <article class="room-monitor-card occupancy-widget">
@@ -284,6 +304,7 @@
             </button>
           </div>
         </div>
+        <button id="registerSelectedRoomBtn" class="register-selected-room-button" type="button" hidden>+ Daftarkan Tenant di Unit Ini</button>
         <p id="dTenant" class="tenant"></p>
         <div class="tabbed-content" data-tabs>
           <div class="detail-tabs" role="tablist" aria-label="Informasi tenant">
@@ -340,25 +361,22 @@
               <label>Kontak Client<input name="contact" type="text" maxlength="200" /></label>
             </section>
             <section id="editorPaymentPanel" role="tabpanel" aria-labelledby="editorPaymentTab" hidden>
-              <label>Status pembayaran
-                <select name="payment_status">
-                  <option value="">-</option>
-                  <option value="Lunas">Lunas</option>
-                  <option value="Termin">Termin</option>
-                  <option value="Partial Paid">Partial Paid</option>
+              <label>Skema Pembayaran Sewa
+                <select name="rental_invoice_scheme" required>
+                  <option value="LUNAS">Lunas</option>
+                  <option value="TERMIN">Termin</option>
+                  <option value="PARTIAL">Partial</option>
                 </select>
+              </label>
+              <label class="invoice-utility-toggle">
+                <input name="separate_utility_invoices" type="checkbox" checked />
+                <span>Pisahkan Invoice Utilitas (Listrik &amp; Telepon) dari Invoice Sewa Ruangan</span>
               </label>
               <label>Mulai sewa<input name="start_date" type="date" /></label>
               <label>Akhir sewa<input name="end_date" type="date" /></label>
-              <label>Nilai kontrak / pembayaran penuh (Rp)
+              <label>Nilai kontrak / tarif sewa per bulan (Rp)
                 <input name="contract_value" type="text" inputmode="numeric" autocomplete="off" data-currency />
                 <small class="currency-preview" data-currency-preview="contract_value" aria-live="polite"></small>
-              </label>
-              <label id="billingPeriodLabel" hidden>Periode pembayaran lunas
-                <select name="billing_period">
-                  <option value="monthly">Per-Bulan</option>
-                  <option value="yearly">Per-Tahun</option>
-                </select>
               </label>
               <section id="installmentEditor" class="installment-editor" hidden aria-label="Pembayaran termin">
                 <h3>Jadwal pembayaran termin</h3>
@@ -392,12 +410,13 @@
               <label>Pembayaran terakhir<input name="last_payment_date" type="date" /></label>
             </section>
             <section id="editorUtilitiesPanel" role="tabpanel" aria-labelledby="editorUtilitiesTab" hidden>
-              <label>Biaya listrik (Rp)
+              <p class="utility-billing-hint">Biaya listrik dan telepon diisi sebagai nominal bulanan. Tagihan setiap bulan jatuh tempo pada tanggal 5 bulan berikutnya.</p>
+              <label>Biaya listrik per bulan (Rp)
                 <input name="electricity_cost_rp" type="text" inputmode="numeric" autocomplete="off" data-currency />
                 <small class="currency-preview" data-currency-preview="electricity_cost_rp" aria-live="polite"></small>
               </label>
               <label>Jumlah pemakaian listrik (kWh)<input name="electricity_kwh" type="number" min="0" step="any" /></label>
-              <label>Biaya telepon (Rp)
+              <label>Biaya telepon per bulan (Rp)
                 <input name="phone_cost_rp" type="text" inputmode="numeric" autocomplete="off" data-currency />
                 <small class="currency-preview" data-currency-preview="phone_cost_rp" aria-live="polite"></small>
               </label>
@@ -415,7 +434,7 @@
       </dialog>
       </main>
 
-    <main id="tenantTableView" class="tenant-table-page" hidden>
+      <main id="tenantTableView" class="tenant-table-page" hidden>
       <section class="tenant-table-card" aria-labelledby="tenantTableHeading">
         <div class="tenant-table-heading">
           <div>
@@ -444,6 +463,7 @@
               <option value="electricityKwh:desc">Pemakaian listrik tertinggi</option>
             </select>
           </label>
+          <button id="registerTenantBtn" class="register-tenant-button tenant-register-action" type="button" aria-label="Daftar tenant baru">+ Daftar Tenant Baru</button>
         </div>
         <p id="tenantTableStatus" class="tenant-table-status" role="status" aria-live="polite">Memuat data tenant…</p>
         <div class="tenant-table-scroll">
@@ -473,6 +493,8 @@
       </section>
     </main>
 
+    </div>
+
     <main id="clientPortalView" class="tenant-table-page" hidden>
       <section class="tenant-table-card client-portal-card" aria-labelledby="clientPortalHeading">
         <div class="tenant-table-heading">
@@ -490,19 +512,18 @@
         <div class="tenant-table-scroll">
           <table class="tenant-data-table">
             <thead>
-              <tr><th>No. Invoice</th><th>Periode</th><th>Jatuh Tempo</th><th>Jumlah</th><th>Status</th><th>Aksi</th></tr>
+              <tr><th>No. Invoice</th><th>Kategori</th><th>Periode</th><th>Jatuh Tempo</th><th>Jumlah</th><th>Status</th><th>Aksi</th></tr>
             </thead>
             <tbody id="clientInvoiceRows"></tbody>
           </table>
         </div>
       </section>
     </main>
-    </div>
 
-    <main id="invoicePage" class="invoice-page" hidden>
+    <dialog id="invoicePage" class="invoice-page" aria-labelledby="invoiceHeading">
       <div class="invoice-toolbar">
-        <button id="invoiceBackButton" class="invoice-back-button" type="button">← Kembali ke portal</button>
-        <button id="invoicePrintButton" class="invoice-print-button" type="button">Cetak / Unduh PDF</button>
+        <button id="invoiceBackButton" class="invoice-back-button" type="button">Tutup invoice</button>
+        <button id="invoicePrintButton" class="invoice-print-button" type="button">Unduh Invoice (PDF)</button>
       </div>
       <article id="invoicePaper" class="invoice-paper" aria-labelledby="invoiceHeading">
         <header class="invoice-header">
@@ -524,6 +545,7 @@
           <div><span>Tanggal Terbit</span><strong id="invoiceDate"></strong></div>
           <div><span>Jatuh Tempo</span><strong id="invoiceDueDate"></strong></div>
           <div><span>Status</span><strong id="invoiceStatus" class="invoice-status"></strong></div>
+          <div><span>Kategori</span><strong id="invoiceCategory"></strong></div>
         </section>
 
         <section class="invoice-billing">
@@ -565,7 +587,7 @@
           <span>Invoice ini dibuat secara elektronik oleh sistem PINTAR.</span>
         </footer>
       </article>
-    </main>
+    </dialog>
 
     <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
 
@@ -611,9 +633,6 @@
       </div>
     </dialog>
 
-    <footer class="status-footer">
-      <span class="footer-status"><span></span> PINTAR · Sistem monitoring internal</span>
-    </footer>
     </div>
 
     <aside
@@ -693,7 +712,6 @@
     <script src="data/tenant-table.js"></script>
     <script src="data/client-portal.js"></script>
     <script src="mapView.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
     <script
       src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
       integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="

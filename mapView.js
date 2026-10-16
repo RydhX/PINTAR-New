@@ -24,6 +24,7 @@ const MapView = (() => {
   let drag = null;
   let pinch = null;
   let viewBoxFrame = 0;
+  let onZoomOutToSite = null;
   const touchPointers = new Map();
   let suppressClick = false;
 
@@ -199,8 +200,9 @@ const MapView = (() => {
   }
 
   /* ---------- API ---------- */
-  function attach(svgEl, { planId, prefix, rooms }) {
+  function attach(svgEl, { planId, prefix, rooms, onZoomOutToSite: returnToSite }) {
     svg = svgEl;
+    onZoomOutToSite = returnToSite;
     svgRect = svg.getBoundingClientRect();
 
     const raw = svg.viewBox?.baseVal;
@@ -254,6 +256,7 @@ const MapView = (() => {
     viewBoxFrame = 0;
     svg?.style.removeProperty("transform");
     svg?.classList.remove("is-dragging");
+    onZoomOutToSite = null;
     svg = null;
     svgRect = null;
     drag = null;
@@ -283,6 +286,12 @@ const MapView = (() => {
 
   function zoomAt(factor, cx, cy) {
     if (!svg || !svgRect?.width || !svgRect?.height) return;
+    if (factor > 1 && vb.w * factor >= full.w * MAX_SCALE) {
+      const returnToSite = onZoomOutToSite;
+      onZoomOutToSite = null;
+      returnToSite?.();
+      return;
+    }
     const p = screenToViewBox(
       cx ?? svgRect.left + svgRect.width / 2,
       cy ?? svgRect.top + svgRect.height / 2,
@@ -392,6 +401,12 @@ const MapView = (() => {
       full.w * MIN_SCALE,
       full.w * MAX_SCALE,
     );
+    if (scale > 1 && width >= full.w * MAX_SCALE) {
+      const returnToSite = onZoomOutToSite;
+      onZoomOutToSite = null;
+      returnToSite?.();
+      return;
+    }
     const ratio = width / pinch.viewBox.w;
     const height = pinch.viewBox.h * ratio;
     const anchor = screenToViewBox(

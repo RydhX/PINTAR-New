@@ -24,7 +24,12 @@ const TenantApi = (() => {
       throw new Error(`Server returned an invalid response (HTTP ${response.status}).`);
     }
     if (!response.ok) {
-      throw new Error(payload.error || `Request failed (HTTP ${response.status}).`);
+      const error = new Error(payload.error || `Request failed (HTTP ${response.status}).`);
+      error.status = response.status;
+      if (response.status === 401) {
+        Auth.expireSession(payload.error || "Sesi berakhir. Silakan masuk kembali.");
+      }
+      throw error;
     }
     return payload;
   }
@@ -41,6 +46,7 @@ const TenantApi = (() => {
       return true;
     } catch (error) {
       if (error.name === "AbortError") return false;
+      if (error.status === 401) return false;
       console.error("Gagal memuat data PostgreSQL:", error);
       statusHandler?.("error", "Gagal memuat database");
       return false;
@@ -98,5 +104,30 @@ const TenantApi = (() => {
     return commit("/api/rooms", "DELETE", identity);
   }
 
-  return Object.freeze({ init, stop, refresh, saveContract, createContract, deleteRecord });
+  function updateUtilityPayment(id, status) {
+    return commit(
+      `/api/utility-payments/${encodeURIComponent(id)}`,
+      "PATCH",
+      { status },
+    );
+  }
+
+  function updateInvoice(id, status, paidAmount) {
+    return commit(
+      `/api/invoices/${encodeURIComponent(id)}`,
+      "PATCH",
+      { status, paid_amount: paidAmount },
+    );
+  }
+
+  return Object.freeze({
+    init,
+    stop,
+    refresh,
+    saveContract,
+    createContract,
+    deleteRecord,
+    updateUtilityPayment,
+    updateInvoice,
+  });
 })();
