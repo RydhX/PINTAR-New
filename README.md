@@ -72,6 +72,8 @@ Vercel melayani frontend dari `public/` pada CDN dan menjalankan Express sebagai
 Vercel Function melalui `index.js`. Jalur `/login` dan `/dashboard` diarahkan ke
 frontend satu halaman melalui `vercel.json`. Hubungkan repository ini ke Vercel
 dengan framework Express dan gunakan perintah build dari `vercel.json`.
+Konfigurasi tersebut menyertakan `public/**` ke dalam function agar Express
+dapat menyajikan aset statis dan modul browser saat runtime.
 
 Tambahkan `DATABASE_URL` (Supabase Session Pooler dengan SSL), `ADMIN_USERNAME`,
 `ADMIN_PASSWORD`, `SUPABASE_URL`, dan `SUPABASE_ANON_KEY` pada environment
