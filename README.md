@@ -66,6 +66,21 @@ role `anon`/`authenticated`; backend mengakses database melalui `DATABASE_URL`.
 Gunakan `.env.production.example` sebagai daftar nama variabel tanpa nilai
 rahasia.
 
+### Deploy di Vercel
+
+Vercel melayani frontend dari `public/` pada CDN dan menjalankan Express sebagai
+Vercel Function melalui `index.js`. Jalur `/login` dan `/dashboard` diarahkan ke
+frontend satu halaman melalui `vercel.json`. Hubungkan repository ini ke Vercel
+dengan framework Express dan gunakan perintah build dari `vercel.json`.
+
+Tambahkan `DATABASE_URL` (Supabase Session Pooler dengan SSL), `ADMIN_USERNAME`,
+`ADMIN_PASSWORD`, `SUPABASE_URL`, dan `SUPABASE_ANON_KEY` pada environment
+Production Vercel serta set `NODE_ENV=production`. Sebelum deploy, jalankan
+[supabase/vercel-sessions.sql](./supabase/vercel-sessions.sql) di Supabase SQL
+Editor. Sesi disimpan sebagai hash token di PostgreSQL agar login berlaku lintas
+function instance, lalu dihapus saat logout. Akun demo non-admin dinonaktifkan
+di production.
+
 ## API
 
 - `GET /api/health` — status backend dan koneksi database.
@@ -88,7 +103,12 @@ Gunakan akun berikut pada halaman login:
 | Internal | `internal` | `internal123` | Peta, seluruh data tenant, ekspor; hanya baca |
 | Client Tenant | `client` | `client123` | Ketersediaan ruang, data tenant PT Coba, dan invoice mock miliknya |
 
-Login ini hanya untuk prototipe: akun demo `internal`/`client`, sesi, dan invoice berada di memori; sesi berakhir saat server dimulai ulang. Akun demo non-admin dinonaktifkan dalam mode produksi. Jangan gunakan kredensial demo atau mekanisme sesi ini sebagai autentikasi produksi tanpa lebih dulu menambahkan penyimpanan sesi, provisioning user-tenant yang tervalidasi, serta kontrol keamanan yang sesuai.
+Kredensial demo `internal`/`client` hanya tersedia di mode development. Dalam
+production, akun admin memakai `ADMIN_USERNAME`/`ADMIN_PASSWORD`, sedangkan
+akun client harus dibuat pada tabel `client_users` dan ditautkan ke tenant.
+Sesi disimpan sebagai hash token di PostgreSQL, sehingga tetap berlaku lintas
+instance serverless dan dapat dicabut saat logout. Invoice demo tetap berupa
+data mock dan perlu diganti sebelum digunakan sebagai data tagihan production.
 
 Halaman login menyediakan pilihan akun demo yang mengisi kredensial secara otomatis. Dashboard mempertahankan peta WebGIS dan memakai layout panel mengambang untuk filter ruang dan detail unit. Route `/dashboard` dan `/login` dilayani sebagai entry point frontend; login tetap diverifikasi oleh API.
 

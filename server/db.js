@@ -8,7 +8,7 @@ if (!process.env.DATABASE_URL && !process.env.PGHOST) {
 
 export const pool = new Pool({
   ...(process.env.DATABASE_URL ? { connectionString: process.env.DATABASE_URL } : {}),
-  max: 10,
+  max: process.env.VERCEL ? 1 : 10,
   idleTimeoutMillis: 30_000,
   connectionTimeoutMillis: 5_000,
 });

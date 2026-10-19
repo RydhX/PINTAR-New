@@ -1,4 +1,10 @@
-import { randomUUID, randomBytes, scrypt as scryptCallback, timingSafeEqual } from "node:crypto";
+import {
+  createHash,
+  randomUUID,
+  randomBytes,
+  scrypt as scryptCallback,
+  timingSafeEqual,
+} from "node:crypto";
 import { promisify } from "node:util";
 import { Router } from "express";
 import { pool } from "./db.js";
@@ -38,7 +44,9 @@ const demoUsers = Object.freeze([
         },
       ]),
 ]);
-const sessions = new Map();
+function sessionTokenHash(token) {
+  return createHash("sha256").update(token).digest("hex");
+}
 
 function publicUser(user) {
   return {
@@ -91,16 +99,23 @@ function unauthorized(res) {
   return res.status(401).json({ error: "Login diperlukan atau sesi telah berakhir." });
 }
 
-export function authenticate(req, res, next) {
+export async function authenticate(req, res, next) {
   const authorization = req.get("authorization") || "";
   const match = /^Bearer ([0-9a-f-]{36})$/i.exec(authorization);
-  const session = match ? sessions.get(match[1]) : null;
-  if (!session || session.expiresAt <= Date.now()) {
-    if (match) sessions.delete(match[1]);
-    return unauthorized(res);
+  if (!match) return unauthorized(res);
+  try {
+    const { rows } = await pool.query(
+      `SELECT user_data
+       FROM app_sessions
+       WHERE token_hash = $1 AND expires_at > NOW()`,
+      [sessionTokenHash(match[1])],
+    );
+    if (!rows[0]) return unauthorized(res);
+    req.user = rows[0].user_data;
+    next();
+  } catch (error) {
+    next(error);
   }
-  req.user = session.user;
-  next();
 }
 
 export function allowRoles(...roles) {
@@ -122,16 +137,20 @@ export function authenticateCredentials(username, password) {
 
 authRouter.post("/login", async (req, res, next) => {
   try {
-  const user = authenticateCredentials(req.body?.username, req.body?.password) ||
-    await clientUserForCredentials(req.body?.username, req.body?.password);
-  if (!user) return res.status(401).json({ error: "Username atau password tidak sesuai." });
+    const user = authenticateCredentials(req.body?.username, req.body?.password) ||
+      await clientUserForCredentials(req.body?.username, req.body?.password);
+    if (!user) {
+      return res.status(401).json({ error: "Username atau password tidak sesuai." });
+    }
 
-  const token = randomUUID();
-  sessions.set(token, {
-    user,
-    expiresAt: Date.now() + SESSION_TTL_MS,
-  });
-  res.json({ token, user });
+    const token = randomUUID();
+    await pool.query("DELETE FROM app_sessions WHERE expires_at <= NOW()");
+    await pool.query(
+      `INSERT INTO app_sessions (token_hash, user_data, expires_at)
+       VALUES ($1, $2, NOW() + ($3::double precision * INTERVAL '1 millisecond'))`,
+      [sessionTokenHash(token), JSON.stringify(user), SESSION_TTL_MS],
+    );
+    res.json({ token, user });
   } catch (error) {
     next(error);
   }
@@ -158,9 +177,16 @@ authRouter.get("/me", authenticate, (req, res) => {
   res.json({ user: req.user });
 });
 
-authRouter.post("/logout", authenticate, (req, res) => {
-  sessions.delete(req.get("authorization").slice("Bearer ".length));
-  res.sendStatus(204);
+authRouter.post("/logout", authenticate, async (req, res, next) => {
+  try {
+    const token = req.get("authorization").slice("Bearer ".length);
+    await pool.query("DELETE FROM app_sessions WHERE token_hash = $1", [
+      sessionTokenHash(token),
+    ]);
+    res.sendStatus(204);
+  } catch (error) {
+    next(error);
+  }
 });
 
 export const demoInvoices = Object.freeze([

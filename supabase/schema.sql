@@ -86,6 +86,16 @@ CREATE TABLE IF NOT EXISTS client_users (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS app_sessions (
+  token_hash TEXT PRIMARY KEY,
+  user_data JSONB NOT NULL,
+  expires_at TIMESTAMPTZ NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS app_sessions_expires_at_idx
+  ON app_sessions (expires_at);
+
 CREATE UNIQUE INDEX IF NOT EXISTS client_users_username_lower_idx
   ON client_users (lower(username));
 
@@ -258,6 +268,7 @@ ON CONFLICT (contract_id, utility_type, billing_month) DO NOTHING;
 ALTER TABLE tenants ENABLE ROW LEVEL SECURITY;
 ALTER TABLE tenant_contracts ENABLE ROW LEVEL SECURITY;
 ALTER TABLE client_users ENABLE ROW LEVEL SECURITY;
+ALTER TABLE app_sessions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE utility_payments ENABLE ROW LEVEL SECURITY;
 ALTER TABLE tenant_invoices ENABLE ROW LEVEL SECURITY;
 ALTER TABLE contract_rooms ENABLE ROW LEVEL SECURITY;
@@ -272,6 +283,9 @@ CREATE POLICY deny_direct_client_access ON tenant_contracts
   FOR ALL TO anon, authenticated USING (false) WITH CHECK (false);
 DROP POLICY IF EXISTS deny_direct_client_access ON client_users;
 CREATE POLICY deny_direct_client_access ON client_users
+  FOR ALL TO anon, authenticated USING (false) WITH CHECK (false);
+DROP POLICY IF EXISTS deny_direct_client_access ON app_sessions;
+CREATE POLICY deny_direct_client_access ON app_sessions
   FOR ALL TO anon, authenticated USING (false) WITH CHECK (false);
 DROP POLICY IF EXISTS deny_direct_client_access ON utility_payments;
 CREATE POLICY deny_direct_client_access ON utility_payments

@@ -1,0 +1,7 @@
+{
+  "buildCommand": "npm run build",
+  "rewrites": [
+    { "source": "/login", "destination": "/index.html" },
+    { "source": "/dashboard", "destination": "/index.html" }
+  ]
+}
