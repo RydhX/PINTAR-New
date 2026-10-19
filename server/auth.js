@@ -8,10 +8,15 @@ export const authRouter = Router();
 const SESSION_TTL_MS = 8 * 60 * 60 * 1000;
 const scrypt = promisify(scryptCallback);
 export const CLIENT_DEFAULT_PASSWORD = "123456";
+const adminPassword = process.env.ADMIN_PASSWORD ||
+  (process.env.NODE_ENV === "production" ? "" : "admin123");
+if (!adminPassword) {
+  throw new Error("ADMIN_PASSWORD must be configured in production.");
+}
 const demoUsers = Object.freeze([
   {
-    username: "admin",
-    password: "admin123",
+    username: process.env.ADMIN_USERNAME || "admin",
+    password: adminPassword,
     role: "admin",
     displayName: "Admin",
   },
