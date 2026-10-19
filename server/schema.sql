@@ -18,6 +18,7 @@ CREATE TABLE IF NOT EXISTS tenant_contracts (
   billing_period TEXT NOT NULL DEFAULT '',
   installment_interval_months INTEGER,
   initial_payment_amount NUMERIC(16, 2),
+  partial_balance_due_date DATE,
   partial_payment_schedule TEXT NOT NULL DEFAULT '',
   installment_payments JSONB NOT NULL DEFAULT '[]'::jsonb,
   last_payment_date DATE,
@@ -35,7 +36,8 @@ ALTER TABLE tenant_contracts
   ADD COLUMN IF NOT EXISTS tenant_id UUID REFERENCES tenants(id) ON DELETE SET NULL;
 ALTER TABLE tenant_contracts
   ADD COLUMN IF NOT EXISTS rental_invoice_scheme TEXT NOT NULL DEFAULT 'LUNAS',
-  ADD COLUMN IF NOT EXISTS separate_utility_invoices BOOLEAN NOT NULL DEFAULT TRUE;
+  ADD COLUMN IF NOT EXISTS separate_utility_invoices BOOLEAN NOT NULL DEFAULT TRUE,
+  ADD COLUMN IF NOT EXISTS partial_balance_due_date DATE;
 
 ALTER TABLE tenant_contracts
   ALTER COLUMN rental_invoice_scheme SET DEFAULT 'LUNAS';
@@ -108,6 +110,7 @@ CREATE TABLE IF NOT EXISTS tenant_invoices (
   contract_id UUID NOT NULL REFERENCES tenant_contracts(id) ON DELETE CASCADE,
   category TEXT NOT NULL DEFAULT 'SEWA'
     CHECK (category IN ('SEWA', 'UTILITAS')),
+  invoice_label TEXT NOT NULL DEFAULT '',
   billing_month DATE NOT NULL,
   billing_date DATE NOT NULL,
   due_date DATE NOT NULL,
@@ -126,6 +129,7 @@ CREATE TABLE IF NOT EXISTS tenant_invoices (
 
 ALTER TABLE tenant_invoices
   ADD COLUMN IF NOT EXISTS category TEXT NOT NULL DEFAULT 'SEWA',
+  ADD COLUMN IF NOT EXISTS invoice_label TEXT NOT NULL DEFAULT '',
   ADD COLUMN IF NOT EXISTS period_start DATE,
   ADD COLUMN IF NOT EXISTS period_end DATE,
   ADD COLUMN IF NOT EXISTS paid_amount NUMERIC(16, 2) NOT NULL DEFAULT 0;
@@ -157,8 +161,9 @@ ALTER TABLE tenant_invoices
     CHECK (paid_amount >= 0 AND paid_amount <= rent_amount + electricity_amount + telephone_amount);
 ALTER TABLE tenant_invoices
   DROP CONSTRAINT IF EXISTS tenant_invoices_contract_id_billing_month_key;
+DROP INDEX IF EXISTS tenant_invoices_contract_month_category_idx;
 CREATE UNIQUE INDEX IF NOT EXISTS tenant_invoices_contract_month_category_idx
-  ON tenant_invoices (contract_id, billing_month, category);
+  ON tenant_invoices (contract_id, billing_month, category, invoice_label);
 
 CREATE TABLE IF NOT EXISTS contract_rooms (
   building TEXT NOT NULL,
@@ -198,10 +203,18 @@ SELECT
   utility.amount
 FROM tenant_contracts AS contract
 CROSS JOIN LATERAL generate_series(
-  date_trunc('month', contract.start_date)::date,
-  date_trunc('month', contract.end_date)::date,
-  INTERVAL '1 month'
-) AS period(billing_month)
+  0,
+  (EXTRACT(YEAR FROM contract.end_date)::integer -
+   EXTRACT(YEAR FROM contract.start_date)::integer) * 12 +
+   EXTRACT(MONTH FROM contract.end_date)::integer -
+   EXTRACT(MONTH FROM contract.start_date)::integer - 1
+) AS period_index(month_count)
+CROSS JOIN LATERAL (
+  SELECT (
+    date_trunc('month', contract.start_date) +
+    make_interval(months => period_index.month_count)
+  )::date AS billing_month
+) AS period
 CROSS JOIN LATERAL (
   VALUES
     ('LISTRIK', contract.electricity_cost_rp),

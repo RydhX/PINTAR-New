@@ -29,6 +29,7 @@ const CONTRACT_FIELDS = [
   "billing_period",
   "installment_interval_months",
   "initial_payment_amount",
+  "partial_balance_due_date",
   "partial_payment_schedule",
   "installment_payments",
   "last_payment_date",
@@ -85,6 +86,14 @@ function readNumber(value, field, integer = false) {
   return numeric;
 }
 
+function rentTotalCents(monthlyRent, monthCount) {
+  const totalCents = Math.round(monthlyRent * 100) * monthCount;
+  if (!Number.isSafeInteger(totalCents)) {
+    throw validationError("Total sewa kontrak melebihi batas nominal yang didukung.");
+  }
+  return totalCents;
+}
+
 function readDate(value, field) {
   if (value === "" || value === null || value === undefined) return null;
   if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) {
@@ -114,6 +123,10 @@ function normalizeContract(body) {
   }
   contract.start_date = readDate(body.start_date, "start_date");
   contract.end_date = readDate(body.end_date, "end_date");
+  contract.partial_balance_due_date = readDate(
+    body.partial_balance_due_date,
+    "partial_balance_due_date",
+  );
   contract.last_payment_date = readDate(body.last_payment_date, "last_payment_date");
   contract.rental_invoice_scheme = body.rental_invoice_scheme ?? "LUNAS";
   if (!["LUNAS", "TERMIN", "PARTIAL"].includes(contract.rental_invoice_scheme)) {
@@ -130,13 +143,23 @@ function normalizeContract(body) {
   ) {
     throw validationError("separate_utility_invoices must be a boolean.");
   }
-  contract.separate_utility_invoices = body.separate_utility_invoices !== false;
+  contract.separate_utility_invoices = true;
   if (contract.start_date && contract.end_date && contract.end_date < contract.start_date) {
     throw validationError("end_date must be on or after start_date.");
+  }
+  if (
+    contract.start_date &&
+    contract.end_date &&
+    contractMonthCount(contract.start_date, contract.end_date) < 1
+  ) {
+    throw validationError("Durasi kontrak harus mencakup minimal satu bulan kalender penuh.");
   }
   if (!contract.tenant) throw validationError("Nama tenant wajib diisi.");
   if (!["occupied", "vacant", "in_progress"].includes(body.occupancy_status)) {
     throw validationError("Status okupansi tidak dikenal.");
+  }
+  if (!contract.start_date || !contract.end_date || !contract.contract_value) {
+    throw validationError("Tanggal mulai, tanggal akhir, dan tarif sewa bulanan wajib diisi.");
   }
 
   let installments = body.installment_payments ?? [];
@@ -168,13 +191,12 @@ function normalizeContract(body) {
       !contract.contract_value ||
       !contract.start_date ||
       !contract.end_date ||
-      contract.installment_interval_months < 1 ||
-      contract.installment_interval_months > 12
+      ![1, 3, 6, 12].includes(contract.installment_interval_months)
     ) {
-      throw validationError("Nilai kontrak, tanggal kontrak, dan interval termin 1–12 bulan wajib diisi.");
+      throw validationError("Nilai kontrak, tanggal kontrak, dan interval termin 1, 3, 6, atau 12 bulan wajib diisi.");
     }
-    const totalRent =
-      contract.contract_value * contractMonthCount(contract.start_date, contract.end_date);
+    const monthCount = contractMonthCount(contract.start_date, contract.end_date);
+    const totalRentCents = rentTotalCents(contract.contract_value, monthCount);
     const termCount = Math.ceil(
       contractMonthCount(contract.start_date, contract.end_date) /
       contract.installment_interval_months,
@@ -182,8 +204,11 @@ function normalizeContract(body) {
     if (normalizedInstallments.some((item) => item.term > termCount)) {
       throw validationError("Nomor pembayaran termin melebihi jumlah termin kontrak.");
     }
-    const amountPaid = normalizedInstallments.reduce((total, item) => total + item.amount, 0);
-    if (amountPaid > totalRent) {
+    const amountPaidCents = normalizedInstallments.reduce(
+      (total, item) => total + Math.round(item.amount * 100),
+      0,
+    );
+    if (amountPaidCents > totalRentCents) {
       throw validationError("Total pembayaran termin melebihi nilai kontrak.");
     }
   }
@@ -193,13 +218,23 @@ function normalizeContract(body) {
       !contract.start_date ||
       !contract.end_date ||
       contract.initial_payment_amount === null ||
-      !contract.partial_payment_schedule
+      !contract.partial_balance_due_date
     ) {
-      throw validationError("Nilai kontrak, tanggal kontrak, dan nominal DP wajib diisi untuk skema Partial.");
+      throw validationError("Nilai kontrak, tanggal kontrak, nominal DP, dan tanggal jatuh tempo pelunasan sisa wajib diisi untuk skema Partial.");
     }
-    const totalRent =
-      contract.contract_value * contractMonthCount(contract.start_date, contract.end_date);
-    if (contract.initial_payment_amount <= 0 || contract.initial_payment_amount > totalRent) {
+    if (contract.partial_balance_due_date < contract.start_date) {
+      throw validationError("Jatuh tempo pelunasan sisa tidak boleh sebelum tanggal mulai kontrak.");
+    }
+    const totalRentCents = rentTotalCents(
+      contract.contract_value,
+      contractMonthCount(contract.start_date, contract.end_date),
+    );
+    const initialPaymentCents = Math.round(contract.initial_payment_amount * 100);
+    if (
+      contract.initial_payment_amount <= 0 ||
+      !Number.isSafeInteger(initialPaymentCents) ||
+      initialPaymentCents > totalRentCents
+    ) {
       throw validationError("Nominal DP harus lebih dari Rp0 dan tidak melebihi total sewa kontrak.");
     }
   }
@@ -287,27 +322,28 @@ async function syncInvoices(client, tenantId, contractId, contract) {
   for (const invoice of schedule) {
     await client.query(
       `INSERT INTO tenant_invoices (
-        id, invoice_number, tenant_id, contract_id, category, billing_month,
-        billing_date, due_date, period_start, period_end, rent_amount,
+        id, invoice_number, tenant_id, contract_id, category, invoice_label,
+        billing_month, billing_date, due_date, period_start, period_end, rent_amount,
         electricity_amount, telephone_amount, paid_amount, status, paid_at
       ) VALUES (
         $1::uuid,
-        'INV-' || to_char($5::date, 'YYYY-MM') || '-' ||
+        'INV-' || to_char($6::date, 'YYYY-MM') || '-' ||
           lpad(nextval('invoice_number_seq')::text, 3, '0'),
-        $2::uuid, $3::uuid, $4, $5::date, $6::date, $7::date,
-        $8::date, $9::date, $10, $11, $12, $13,
+        $2::uuid, $3::uuid, $4, $5, $6::date, $7::date, $8::date,
+        $9::date, $10::date, $11, $12, $13, $14,
         CASE
-          WHEN $13::numeric >= $10::numeric + $11::numeric + $12::numeric THEN 'LUNAS'
-          WHEN $13::numeric > 0 THEN 'SEBAGIAN'
+          WHEN $14::numeric > 0
+            AND $14::numeric >= $11::numeric + $12::numeric + $13::numeric THEN 'LUNAS'
+          WHEN $14::numeric > 0 THEN 'SEBAGIAN'
           ELSE 'BELUM_DIBAYAR'
         END,
         CASE
-          WHEN $13::numeric >= $10::numeric + $11::numeric + $12::numeric
-            AND $13::numeric > 0 THEN NOW()
+          WHEN $14::numeric > 0
+            AND $14::numeric >= $11::numeric + $12::numeric + $13::numeric THEN NOW()
           ELSE NULL
         END
       )
-      ON CONFLICT (contract_id, billing_month, category) DO UPDATE SET
+      ON CONFLICT (contract_id, billing_month, category, invoice_label) DO UPDATE SET
         tenant_id = EXCLUDED.tenant_id,
         billing_date = EXCLUDED.billing_date,
         due_date = EXCLUDED.due_date,
@@ -321,14 +357,31 @@ async function syncInvoices(client, tenantId, contractId, contract) {
           EXCLUDED.rent_amount + EXCLUDED.electricity_amount + EXCLUDED.telephone_amount
         ),
         status = CASE
-          WHEN tenant_invoices.paid_amount >=
+          WHEN LEAST(
+            tenant_invoices.paid_amount,
+            EXCLUDED.rent_amount + EXCLUDED.electricity_amount + EXCLUDED.telephone_amount
+          ) > 0
+            AND LEAST(
+              tenant_invoices.paid_amount,
+              EXCLUDED.rent_amount + EXCLUDED.electricity_amount + EXCLUDED.telephone_amount
+            ) >=
             EXCLUDED.rent_amount + EXCLUDED.electricity_amount + EXCLUDED.telephone_amount
             THEN 'LUNAS'
-          WHEN tenant_invoices.paid_amount > 0 THEN 'SEBAGIAN'
+          WHEN LEAST(
+            tenant_invoices.paid_amount,
+            EXCLUDED.rent_amount + EXCLUDED.electricity_amount + EXCLUDED.telephone_amount
+          ) > 0 THEN 'SEBAGIAN'
           ELSE 'BELUM_DIBAYAR'
         END,
         paid_at = CASE
-          WHEN tenant_invoices.paid_amount >=
+          WHEN LEAST(
+            tenant_invoices.paid_amount,
+            EXCLUDED.rent_amount + EXCLUDED.electricity_amount + EXCLUDED.telephone_amount
+          ) > 0
+            AND LEAST(
+              tenant_invoices.paid_amount,
+              EXCLUDED.rent_amount + EXCLUDED.electricity_amount + EXCLUDED.telephone_amount
+            ) >=
             EXCLUDED.rent_amount + EXCLUDED.electricity_amount + EXCLUDED.telephone_amount
             THEN COALESCE(tenant_invoices.paid_at, NOW())
           ELSE NULL
@@ -339,6 +392,7 @@ async function syncInvoices(client, tenantId, contractId, contract) {
         tenantId,
         contractId,
         invoice.category,
+        invoice.invoice_label,
         invoice.billing_month,
         invoice.billing_date,
         invoice.due_date,
@@ -347,7 +401,7 @@ async function syncInvoices(client, tenantId, contractId, contract) {
         invoice.rent_amount,
         invoice.electricity_amount,
         invoice.telephone_amount,
-        invoice.paid_amount || 0,
+        invoice.paid_amount,
       ],
     );
   }
@@ -358,14 +412,17 @@ async function syncInvoices(client, tenantId, contractId, contract) {
        AND saved.paid_amount = 0
        AND NOT EXISTS (
          SELECT 1
-         FROM unnest($2::date[], $3::text[]) AS expected(billing_month, category)
+         FROM unnest($2::date[], $3::text[], $4::text[])
+           AS expected(billing_month, category, invoice_label)
          WHERE expected.billing_month = saved.billing_month
            AND expected.category = saved.category
+           AND expected.invoice_label = saved.invoice_label
        )`,
     [
       contractId,
       schedule.map((invoice) => invoice.billing_month),
       schedule.map((invoice) => invoice.category),
+      schedule.map((invoice) => invoice.invoice_label),
     ],
   );
 }
@@ -416,13 +473,14 @@ function mapRoomRecord(row) {
     tenant: row.tenant ?? "",
     payment_status: row.payment_status ?? "",
     rental_invoice_scheme: row.rental_invoice_scheme ?? "LUNAS",
-    separate_utility_invoices: row.separate_utility_invoices !== false,
+    separate_utility_invoices: true,
     start_date: row.start_date ?? "",
     end_date: row.end_date ?? "",
     contract_value: row.contract_value === null ? "" : Number(row.contract_value),
     billing_period: row.billing_period ?? "",
     installment_interval_months: row.installment_interval_months ?? "",
     initial_payment_amount: row.initial_payment_amount === null ? "" : Number(row.initial_payment_amount),
+    partial_balance_due_date: row.partial_balance_due_date ?? "",
     partial_payment_schedule: row.partial_payment_schedule ?? "",
     installment_payments: JSON.stringify(row.installment_payments ?? []),
     installments: row.installment_payments ?? [],
@@ -457,7 +515,8 @@ tenantsRouter.get("/rooms", async (req, res, next) => {
         c.start_date::text, c.end_date::text, c.contract_value,
         c.rental_invoice_scheme, c.separate_utility_invoices,
         c.billing_period, c.installment_interval_months,
-        c.initial_payment_amount, c.partial_payment_schedule,
+        c.initial_payment_amount, c.partial_balance_due_date::text,
+        c.partial_payment_schedule,
         c.installment_payments, c.last_payment_date::text,
         c.electricity_cost_rp, c.electricity_kwh, c.phone_cost_rp,
         c.pic, c.contact, c.notes,
@@ -487,6 +546,7 @@ tenantsRouter.get("/rooms", async (req, res, next) => {
           'id', invoice.id,
           'invoice_id', invoice.invoice_number,
           'category', invoice.category,
+          'invoice_label', invoice.invoice_label,
           'billing_month', invoice.billing_month::text,
           'billing_date', invoice.billing_date::text,
           'due_date', invoice.due_date::text,
@@ -505,7 +565,7 @@ tenantsRouter.get("/rooms", async (req, res, next) => {
             ELSE invoice.status
           END,
           'recorded_status', invoice.status
-        ) ORDER BY invoice.billing_month, invoice.category) AS records
+        ) ORDER BY invoice.billing_month, invoice.category, invoice.invoice_label) AS records
         FROM tenant_invoices invoice
         WHERE invoice.contract_id = c.id
       ) invoices ON TRUE
@@ -595,7 +655,7 @@ tenantsRouter.get("/tenants", async (req, res, next) => {
       `SELECT c.id, c.tenant, c.contact, c.pic, c.notes, c.payment_status,
        c.start_date::text, c.end_date::text, c.contract_value, c.billing_period,
        c.installment_interval_months, c.initial_payment_amount,
-       c.partial_payment_schedule, c.installment_payments,
+       c.partial_balance_due_date::text, c.partial_payment_schedule, c.installment_payments,
        c.last_payment_date::text, c.electricity_cost_rp, c.electricity_kwh,
        c.phone_cost_rp,
         COALESCE(
@@ -631,6 +691,7 @@ tenantsRouter.get("/tenants", async (req, res, next) => {
         initialPaymentAmount: row.initial_payment_amount === null
           ? null
           : Number(row.initial_payment_amount),
+        partialBalanceDueDate: row.partial_balance_due_date,
         partialPaymentSchedule: row.partial_payment_schedule,
         installmentPayments: row.installment_payments,
         lastPaymentDate: row.last_payment_date,
@@ -659,7 +720,7 @@ tenantsRouter.get("/invoices", async (req, res, next) => {
   }
   try {
     const { rows } = await pool.query(
-      `SELECT invoice.id, invoice.invoice_number, invoice.category,
+      `SELECT invoice.id, invoice.invoice_number, invoice.category, invoice.invoice_label,
         tenant.name AS tenant_name, invoice.billing_month::text,
         invoice.billing_date::text, invoice.due_date::text,
         invoice.period_start::text, invoice.period_end::text,
@@ -674,7 +735,8 @@ tenantsRouter.get("/invoices", async (req, res, next) => {
        FROM tenant_invoices invoice
        JOIN tenants tenant ON tenant.id = invoice.tenant_id
        WHERE ($1::uuid IS NULL OR invoice.tenant_id = $1::uuid)
-       ORDER BY invoice.billing_month DESC, invoice.category, invoice.invoice_number`,
+       ORDER BY invoice.billing_month DESC, invoice.category,
+         invoice.invoice_label, invoice.invoice_number`,
       [req.user.role === "client" ? req.user.tenantId : null],
     );
     res.json({
@@ -682,6 +744,7 @@ tenantsRouter.get("/invoices", async (req, res, next) => {
         id: row.id,
         invoiceId: row.invoice_number,
         category: row.category,
+        invoiceLabel: row.invoice_label,
         tenantName: row.tenant_name,
         period: row.billing_month.slice(0, 7),
         billingDate: row.billing_date,
@@ -824,12 +887,14 @@ tenantsRouter.post("/contracts", allowRoles("admin"), async (req, res, next) => 
         id, tenant_id, tenant, payment_status, rental_invoice_scheme,
         separate_utility_invoices, start_date, end_date, contract_value,
         billing_period, installment_interval_months, initial_payment_amount,
-        partial_payment_schedule, installment_payments, last_payment_date,
+        partial_balance_due_date, partial_payment_schedule, installment_payments,
+        last_payment_date,
         electricity_cost_rp, electricity_kwh, phone_cost_rp, pic, contact, notes,
         updated_at
       ) VALUES (
         $1::uuid, $2::uuid, $3, $4, $5, $6, $7::date, $8::date, $9, $10,
-        $11, $12, $13, $14::jsonb, $15::date, $16, $17, $18, $19, $20, $21, NOW()
+        $11, $12, $13::date, $14, $15::jsonb, $16::date, $17, $18, $19, $20,
+        $21, $22, NOW()
       )
       ON CONFLICT (id) DO UPDATE SET
         tenant_id = EXCLUDED.tenant_id,
@@ -843,6 +908,7 @@ tenantsRouter.post("/contracts", allowRoles("admin"), async (req, res, next) => 
         billing_period = EXCLUDED.billing_period,
         installment_interval_months = EXCLUDED.installment_interval_months,
         initial_payment_amount = EXCLUDED.initial_payment_amount,
+        partial_balance_due_date = EXCLUDED.partial_balance_due_date,
         partial_payment_schedule = EXCLUDED.partial_payment_schedule,
         installment_payments = EXCLUDED.installment_payments,
         last_payment_date = EXCLUDED.last_payment_date,
@@ -866,6 +932,7 @@ tenantsRouter.post("/contracts", allowRoles("admin"), async (req, res, next) => 
         contract.billing_period,
         contract.installment_interval_months,
         contract.initial_payment_amount,
+        contract.partial_balance_due_date,
         contract.partial_payment_schedule,
         contract.installment_payments,
         contract.last_payment_date,

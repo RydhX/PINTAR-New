@@ -363,14 +363,10 @@
             <section id="editorPaymentPanel" role="tabpanel" aria-labelledby="editorPaymentTab" hidden>
               <label>Skema Pembayaran Sewa
                 <select name="rental_invoice_scheme" required>
-                  <option value="LUNAS">Lunas</option>
-                  <option value="TERMIN">Termin</option>
-                  <option value="PARTIAL">Partial</option>
+                  <option value="LUNAS">Lunas di Awal (Full Upfront)</option>
+                  <option value="TERMIN">Termin (Installments)</option>
+                  <option value="PARTIAL">DP / Partial Paid</option>
                 </select>
-              </label>
-              <label class="invoice-utility-toggle">
-                <input name="separate_utility_invoices" type="checkbox" checked />
-                <span>Pisahkan Invoice Utilitas (Listrik &amp; Telepon) dari Invoice Sewa Ruangan</span>
               </label>
               <label>Mulai sewa<input name="start_date" type="date" /></label>
               <label>Akhir sewa<input name="end_date" type="date" /></label>
@@ -379,32 +375,28 @@
                 <small class="currency-preview" data-currency-preview="contract_value" aria-live="polite"></small>
               </label>
               <section id="installmentEditor" class="installment-editor" hidden aria-label="Pembayaran termin">
-                <h3>Jadwal pembayaran termin</h3>
-                <label>Interval pembayaran
+                <h3>Pratinjau invoice termin</h3>
+                <label>Interval Termin
                   <select name="installment_interval_months">
-                    <option value="1">Setiap 1 bulan</option>
-                    <option value="3">Setiap 3 bulan</option>
-                    <option value="6">Setiap 6 bulan</option>
-                    <option value="12">Setiap 12 bulan</option>
+                    <option value="1">1 Bulan</option>
+                    <option value="3">3 Bulan</option>
+                    <option value="6" selected>6 Bulan</option>
+                    <option value="12">12 Bulan</option>
                   </select>
                 </label>
-                <div id="installmentList" class="installment-list"></div>
-                <div class="installment-summary" aria-live="polite">
-                  <span>Total dibayar <b id="installmentPaidTotal">Rp0</b></span>
-                  <span>Sisa pembayaran <b id="installmentRemaining">Rp0</b></span>
-                </div>
+                <div id="installmentList" class="installment-list" aria-live="polite"></div>
               </section>
               <section id="partialPaymentEditor" class="installment-editor" hidden aria-label="Pembayaran sebagian">
-                <h3>Uang muka dan kesepakatan pelunasan</h3>
-                <label>Uang muka / DP (Rp)
+                <h3>DP dan pelunasan sisa</h3>
+                <label>Nominal DP / Uang Muka (Rp)
                   <input name="initial_payment_amount" type="text" inputmode="numeric" autocomplete="off" data-currency />
                   <small class="currency-preview" data-currency-preview="initial_payment_amount" aria-live="polite"></small>
                 </label>
-                <label>Jadwal pelunasan sesuai kesepakatan
-                  <textarea name="partial_payment_schedule" rows="3" maxlength="1000" placeholder="Contoh: Sisa dibayar dalam 2 tahap, paling lambat 31 Desember 2026."></textarea>
+                <label>Tanggal Jatuh Tempo Pelunasan Sisa
+                  <input name="partial_balance_due_date" type="date" />
                 </label>
                 <div class="installment-summary">
-                  <span>Sisa untuk jadwal khusus <b id="partialPaymentRemaining">Rp0</b></span>
+                  <span>Nominal invoice pelunasan sisa <b id="partialPaymentRemaining">Rp0</b></span>
                 </div>
               </section>
               <label>Pembayaran terakhir<input name="last_payment_date" type="date" /></label>
@@ -508,7 +500,33 @@
           Memuat data akun…
         </p>
         <div id="clientTenantDetails" class="client-tenant-details"></div>
-        <h3>Invoice Saya</h3>
+        <h3 class="client-invoice-heading">Invoice Saya</h3>
+        <section class="client-invoice-metrics" aria-label="Ringkasan tagihan">
+          <article class="client-invoice-metric">
+            <span>Total Tagihan Belum Dibayar</span>
+            <strong id="clientUnpaidTotal">Rp0</strong>
+            <small id="clientUnpaidCount">0 invoice</small>
+          </article>
+          <article class="client-invoice-metric">
+            <span>Jatuh Tempo Terdekat</span>
+            <strong id="clientNextDueDate">-</strong>
+            <small id="clientNextDueAmount">Tidak ada tagihan mendatang</small>
+          </article>
+        </section>
+        <div class="client-invoice-controls">
+          <div class="client-invoice-tabs" role="group" aria-label="Filter invoice">
+            <button type="button" class="is-active" data-invoice-filter="unpaid" aria-pressed="true">Perlu Dibayar</button>
+            <button type="button" data-invoice-filter="all" aria-pressed="false">Semua</button>
+            <button type="button" data-invoice-filter="paid" aria-pressed="false">Lunas</button>
+            <button type="button" data-invoice-filter="rent" aria-pressed="false">Sewa Ruangan</button>
+            <button type="button" data-invoice-filter="utility" aria-pressed="false">Utilitas</button>
+          </div>
+          <label class="client-invoice-year-filter">Tahun
+            <select id="clientInvoiceYear">
+              <option value="all">Semua Tahun</option>
+            </select>
+          </label>
+        </div>
         <div class="tenant-table-scroll">
           <table class="tenant-data-table">
             <thead>
@@ -517,6 +535,13 @@
             <tbody id="clientInvoiceRows"></tbody>
           </table>
         </div>
+        <footer class="client-invoice-pagination">
+          <span id="clientInvoicePageSummary" aria-live="polite">Menampilkan 0 dari 0 invoice</span>
+          <div>
+            <button id="clientInvoicePrevious" type="button" disabled>Sebelumnya</button>
+            <button id="clientInvoiceNext" type="button" disabled>Selanjutnya</button>
+          </div>
+        </footer>
       </section>
     </main>
 

@@ -1,3 +1,5 @@
+import { contractMonthCount } from "./billing.js";
+
 const UTILITY_TYPES = Object.freeze([
   { type: "LISTRIK", amountField: "electricity_cost_rp" },
   { type: "TELEPON", amountField: "phone_cost_rp" },
@@ -7,22 +9,13 @@ function monthStart(date) {
   return `${date.slice(0, 7)}-01`;
 }
 
-function touchedMonthCount(startDate, endDate) {
-  const start = new Date(`${startDate}T00:00:00.000Z`);
-  const end = new Date(`${endDate}T00:00:00.000Z`);
-  const difference =
-    (end.getUTCFullYear() - start.getUTCFullYear()) * 12 +
-    end.getUTCMonth() -
-    start.getUTCMonth();
-  return Math.max(1, difference + (end.getUTCDate() === start.getUTCDate() ? 0 : 1));
-}
-
 export function buildUtilitySchedule(contract, dueDay = 5) {
   const { start_date: startDate, end_date: endDate } = contract;
   if (!startDate || !endDate || endDate < startDate) return [];
 
   const firstMonth = monthStart(startDate);
-  const monthCount = touchedMonthCount(startDate, endDate);
+  const monthCount = contractMonthCount(startDate, endDate);
+  if (monthCount < 1) return [];
   const schedule = [];
   const cursor = new Date(`${firstMonth}T00:00:00.000Z`);
 

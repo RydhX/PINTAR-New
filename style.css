@@ -493,6 +493,13 @@ button { font: inherit; cursor: pointer; }
   align-items: end;
   gap: 6px;
 }
+.installment-preview-row {
+  align-items: center;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+.installment-preview-row strong { white-space: nowrap; }
 .installment-row label { min-width: 0; }
 .installment-row label span { color: var(--muted); font-size: 11px; }
 .remove-installment {
@@ -4185,10 +4192,135 @@ body[data-view="tenants"] {
   color: #e11d48;
 }
 .invoice-view-action {
-  border-color: #bfdbfe;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 10px;
+  border-color: #e2e8f0;
+  border-radius: 8px;
+  background: transparent;
+  color: #334155;
+  font-size: 11px;
+  font-weight: 500;
+}
+.invoice-view-action:hover {
+  border-color: #cbd5e1;
+  background: #f1f5f9;
+  color: #0f172a;
+}
+.client-invoice-heading { margin: 25px 0 12px; color: #0f172a; font-size: 18px; }
+.client-invoice-metrics {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  margin: 0 0 18px;
+}
+.client-invoice-metric {
+  display: grid;
+  gap: 8px;
+  min-height: 116px;
+  padding: 17px 19px;
+  border: 1px solid #e2e8f0;
+  border-radius: 14px;
+  background: linear-gradient(135deg, #fff, #f8fafc);
+  box-shadow: 0 5px 18px rgba(15, 23, 42, .045);
+}
+.client-invoice-metric > span { color: #64748b; font-size: 12px; font-weight: 600; }
+.client-invoice-metric > strong { color: #b45309; font-size: clamp(20px, 3vw, 26px); line-height: 1.2; }
+.client-invoice-metric:first-child > strong { color: #be123c; }
+.client-invoice-metric > small { color: #94a3b8; font-size: 11px; }
+.client-invoice-controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.client-invoice-tabs {
+  display: flex;
+  min-width: 0;
+  gap: 5px;
+  overflow-x: auto;
+  padding: 3px 0;
+}
+.client-invoice-tabs button {
+  flex: 0 0 auto;
+  padding: 8px 11px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: #64748b;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+}
+.client-invoice-tabs button:hover { background: #f1f5f9; color: #334155; }
+.client-invoice-tabs button.is-active {
+  border-color: #dbeafe;
   background: #eff6ff;
   color: #1d4ed8;
   font-weight: 600;
+}
+.client-invoice-year-filter {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 7px;
+  color: #64748b;
+  font-size: 11px;
+}
+.client-invoice-year-filter select {
+  min-height: 34px;
+  padding: 6px 28px 6px 9px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #fff;
+  color: #334155;
+  font: inherit;
+}
+.invoice-category-badge {
+  display: inline-flex;
+  align-items: center;
+  max-width: 240px;
+  padding: 4px 10px;
+  overflow: hidden;
+  border: 1px solid;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 500;
+  text-overflow: ellipsis;
+}
+.invoice-category-badge.is-rent { border-color: #bfdbfe; background: #eff6ff; color: #1d4ed8; }
+.invoice-category-badge.is-utility { border-color: #e9d5ff; background: #faf5ff; color: #7e22ce; }
+.client-invoice-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 13px;
+  color: #64748b;
+  font-size: 12px;
+}
+.client-invoice-pagination > div { display: flex; gap: 7px; }
+.client-invoice-pagination button {
+  padding: 7px 11px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #fff;
+  color: #334155;
+  font: inherit;
+}
+.client-invoice-pagination button:not(:disabled):hover { background: #f1f5f9; }
+.client-invoice-pagination button:disabled { cursor: not-allowed; opacity: .45; }
+@media (max-width: 760px) {
+  .client-invoice-metrics { grid-template-columns: 1fr; gap: 9px; }
+  .client-invoice-metric { min-height: 98px; padding: 14px; }
+  .client-invoice-controls { align-items: stretch; flex-direction: column; }
+  .client-invoice-year-filter { justify-content: space-between; }
+}
+@media (max-width: 460px) {
+  .client-invoice-pagination { align-items: flex-start; flex-direction: column; }
 }
 .client-account-switcher {
   display: grid;

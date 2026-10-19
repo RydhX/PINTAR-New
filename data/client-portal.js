@@ -3,6 +3,15 @@ const ClientPortal = (() => {
   const tenantEl = document.getElementById("clientPortalTenant");
   const detailsEl = document.getElementById("clientTenantDetails");
   const invoicesEl = document.getElementById("clientInvoiceRows");
+  const unpaidTotalEl = document.getElementById("clientUnpaidTotal");
+  const unpaidCountEl = document.getElementById("clientUnpaidCount");
+  const nextDueDateEl = document.getElementById("clientNextDueDate");
+  const nextDueAmountEl = document.getElementById("clientNextDueAmount");
+  const yearFilterEl = document.getElementById("clientInvoiceYear");
+  const pageSummaryEl = document.getElementById("clientInvoicePageSummary");
+  const previousPageEl = document.getElementById("clientInvoicePrevious");
+  const nextPageEl = document.getElementById("clientInvoiceNext");
+  const invoiceTabsEl = document.querySelector(".client-invoice-tabs");
   const invoicePageEl = document.getElementById("invoicePage");
   const invoiceItemRowsEl = document.getElementById("invoiceItemRows");
   const printButton = document.getElementById("invoicePrintButton");
@@ -25,6 +34,10 @@ const ClientPortal = (() => {
   let invoiceRecords = [];
   let lastInvoiceAction = null;
   let refreshSequence = 0;
+  let invoiceFilter = "unpaid";
+  let invoiceYear = "all";
+  let invoicePage = 1;
+  const INVOICES_PER_PAGE = 5;
 
   function readAmount(value, label) {
     const amount = value == null ? 0 : Number(value);
@@ -46,6 +59,194 @@ const ClientPortal = (() => {
     const date = new Date(Number(match[1]), Number(match[2]) - 1, 1);
     return periodFormatter.format(date);
   }
+
+  function normalizedStatus(invoice) {
+    return String(invoice.status || "").toLocaleUpperCase("id-ID");
+  }
+
+  function isPaid(invoice) {
+    return normalizedStatus(invoice) === "LUNAS";
+  }
+
+  function invoiceCategory(invoice) {
+    return invoice.category === "UTILITAS" ? "utility" : "rent";
+  }
+
+  function invoiceYearValue(invoice) {
+    const match = /^(\d{4})/.exec(String(invoice.period || invoice.dueDate || ""));
+    return match?.[1] || "";
+  }
+
+  function outstandingAmount(invoice) {
+    if (invoice.remainingAmountRp !== undefined) {
+      return readAmount(invoice.remainingAmountRp, "sisa tagihan");
+    }
+    return readAmount(invoice.amountRp, "total tagihan");
+  }
+
+  function updateInvoiceSummary() {
+    const unpaid = invoiceRecords.filter((invoice) => !isPaid(invoice));
+    const unpaidTotal = unpaid.reduce((total, invoice) => total + outstandingAmount(invoice), 0);
+    unpaidTotalEl.textContent = currency.format(unpaidTotal);
+    unpaidCountEl.textContent = `${unpaid.length} invoice`;
+
+    const today = new Date();
+    const todayValue = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
+    const upcoming = unpaid
+      .filter((invoice) => invoice.dueDate && invoice.dueDate >= todayValue)
+      .sort((left, right) => left.dueDate.localeCompare(right.dueDate))[0];
+    nextDueDateEl.textContent = upcoming ? formatDate(upcoming.dueDate) : "-";
+    nextDueAmountEl.textContent = upcoming
+      ? currency.format(outstandingAmount(upcoming))
+      : "Tidak ada tagihan mendatang";
+  }
+
+  function updateInvoiceYears() {
+    const years = [...new Set(invoiceRecords.map(invoiceYearValue).filter(Boolean))]
+      .sort((left, right) => right.localeCompare(left));
+    yearFilterEl.replaceChildren();
+    const allYears = document.createElement("option");
+    allYears.value = "all";
+    allYears.textContent = "Semua Tahun";
+    yearFilterEl.appendChild(allYears);
+    years.forEach((year) => {
+      const option = document.createElement("option");
+      option.value = year;
+      option.textContent = year;
+      yearFilterEl.appendChild(option);
+    });
+    if (invoiceYear !== "all" && !years.includes(invoiceYear)) invoiceYear = "all";
+    yearFilterEl.value = invoiceYear;
+  }
+
+  function filteredInvoices() {
+    return invoiceRecords
+      .filter((invoice) => {
+        if (invoiceFilter === "unpaid" && isPaid(invoice)) return false;
+        if (invoiceFilter === "paid" && !isPaid(invoice)) return false;
+        if (invoiceFilter === "rent" && invoiceCategory(invoice) !== "rent") return false;
+        if (invoiceFilter === "utility" && invoiceCategory(invoice) !== "utility") return false;
+        return invoiceYear === "all" || invoiceYearValue(invoice) === invoiceYear;
+      })
+      .sort((left, right) => {
+        const leftDueDate = left.dueDate || "";
+        const rightDueDate = right.dueDate || "";
+        return leftDueDate.localeCompare(rightDueDate) ||
+          String(left.invoiceId).localeCompare(String(right.invoiceId));
+      });
+  }
+
+  function renderInvoices() {
+    const filtered = filteredInvoices();
+    const pageCount = Math.ceil(filtered.length / INVOICES_PER_PAGE);
+    invoicePage = Math.min(Math.max(invoicePage, 1), Math.max(pageCount, 1));
+    const startIndex = (invoicePage - 1) * INVOICES_PER_PAGE;
+    const pageInvoices = filtered.slice(startIndex, startIndex + INVOICES_PER_PAGE);
+    invoicesEl.replaceChildren();
+
+    pageInvoices.forEach((invoice) => {
+      const row = document.createElement("tr");
+      const category = invoiceCategory(invoice);
+      const categoryCell = document.createElement("td");
+      const categoryBadge = document.createElement("span");
+      categoryBadge.className = `invoice-category-badge is-${category}`;
+      categoryBadge.textContent = category === "utility"
+        ? "Utilitas"
+        : `Sewa Ruangan${invoice.invoiceLabel ? ` · ${invoice.invoiceLabel}` : ""}`;
+      [
+        invoice.invoiceId,
+        categoryBadge,
+        formatPeriod(invoice.period),
+        formatDate(invoice.dueDate),
+        currency.format(invoiceTotal(invoice)),
+      ].forEach((value, index) => {
+        const cell = index === 1 ? categoryCell : document.createElement("td");
+        if (index === 1) cell.appendChild(value);
+        else cell.textContent = value;
+        row.appendChild(cell);
+      });
+      const statusCell = document.createElement("td");
+      const statusBadge = document.createElement("span");
+      const status = normalizedStatus(invoice);
+      statusBadge.className = `invoice-table-status ${
+        status === "LUNAS"
+          ? "is-paid"
+          : status === "MENUNGGAK"
+            ? "is-overdue"
+            : status === "SEBAGIAN"
+              ? "is-partial"
+              : "is-pending"
+      }`;
+      statusBadge.textContent = status === "LUNAS"
+        ? "Lunas"
+        : status === "MENUNGGAK"
+          ? "Menunggak"
+          : status === "SEBAGIAN"
+            ? "Sebagian"
+            : "Belum dibayar";
+      statusCell.appendChild(statusBadge);
+      row.appendChild(statusCell);
+      const actionCell = document.createElement("td");
+      const actionButton = document.createElement("button");
+      actionButton.type = "button";
+      actionButton.className = "tenant-table-action invoice-view-action";
+      actionButton.dataset.invoiceId = invoice.invoiceId;
+      actionButton.textContent = "Lihat invoice";
+      actionButton.disabled = !tenantRecords.some(
+        (record) => record.tenantName === Auth.currentUser?.tenantName,
+      );
+      if (actionButton.disabled) {
+        actionButton.title = "Data tenant untuk invoice ini belum tersedia.";
+      }
+      actionCell.appendChild(actionButton);
+      row.appendChild(actionCell);
+      invoicesEl.appendChild(row);
+    });
+
+    if (!pageInvoices.length) {
+      const row = document.createElement("tr");
+      const cell = document.createElement("td");
+      cell.colSpan = 7;
+      cell.textContent = invoiceRecords.length
+        ? "Tidak ada invoice yang sesuai dengan filter."
+        : "Belum ada invoice.";
+      row.appendChild(cell);
+      invoicesEl.appendChild(row);
+    }
+
+    const shownStart = filtered.length ? startIndex + 1 : 0;
+    const shownEnd = Math.min(startIndex + pageInvoices.length, filtered.length);
+    pageSummaryEl.textContent = `Menampilkan ${shownStart}-${shownEnd} dari ${filtered.length} invoice`;
+    previousPageEl.disabled = invoicePage <= 1;
+    nextPageEl.disabled = invoicePage >= pageCount;
+    updateInvoiceSummary();
+  }
+
+  invoiceTabsEl.addEventListener("click", (event) => {
+    const button = event.target.closest("[data-invoice-filter]");
+    if (!button) return;
+    invoiceFilter = button.dataset.invoiceFilter;
+    invoicePage = 1;
+    invoiceTabsEl.querySelectorAll("[data-invoice-filter]").forEach((tab) => {
+      const active = tab === button;
+      tab.classList.toggle("is-active", active);
+      tab.setAttribute("aria-pressed", String(active));
+    });
+    renderInvoices();
+  });
+  yearFilterEl.addEventListener("change", () => {
+    invoiceYear = yearFilterEl.value;
+    invoicePage = 1;
+    renderInvoices();
+  });
+  previousPageEl.addEventListener("click", () => {
+    invoicePage -= 1;
+    renderInvoices();
+  });
+  nextPageEl.addEventListener("click", () => {
+    invoicePage += 1;
+    renderInvoices();
+  });
 
   function recordsForInvoice() {
     const tenantName = Auth.currentUser?.tenantName;
@@ -141,7 +342,9 @@ const ClientPortal = (() => {
     setInvoiceText("invoicePeriod", period);
     setInvoiceText(
       "invoiceCategory",
-      invoice.category === "UTILITAS" ? "Utilitas (Listrik & Telepon)" : "Sewa Ruangan",
+      invoice.category === "UTILITAS"
+        ? "Utilitas (Listrik & Telepon)"
+        : `Sewa Ruangan${invoice.invoiceLabel ? ` · ${invoice.invoiceLabel}` : ""}`,
     );
     setInvoiceText("invoiceRoomDetails", rooms.length ? `Lokasi / ruang: ${rooms.join(", ")}` : "");
     const normalizedStatus = String(invoice.status).toLocaleUpperCase("id-ID");
@@ -226,6 +429,9 @@ const ClientPortal = (() => {
     invoicesEl.replaceChildren();
     tenantRecords = [];
     invoiceRecords = [];
+    updateInvoiceSummary();
+    updateInvoiceYears();
+    renderInvoices();
     try {
       const headers = Auth.headers();
       const [tenantResponse, invoiceResponse] = await Promise.all([
@@ -266,69 +472,12 @@ const ClientPortal = (() => {
         addDetail(card, "Catatan", record.notes);
         detailsEl.appendChild(card);
       });
-      invoicePayload.records.forEach((invoice) => {
-        const row = document.createElement("tr");
-        [
-          invoice.invoiceId,
-          invoice.category === "UTILITAS" ? "Utilitas (Listrik & Telepon)" : "Sewa Ruangan",
-          formatPeriod(invoice.period),
-          formatDate(invoice.dueDate),
-          currency.format(invoiceTotal(invoice)),
-        ]
-          .forEach((value) => {
-          const cell = document.createElement("td");
-          cell.textContent = value;
-          row.appendChild(cell);
-        });
-        const statusCell = document.createElement("td");
-        const statusBadge = document.createElement("span");
-        const normalizedStatus = String(invoice.status).toLocaleUpperCase("id-ID");
-        statusBadge.className = `invoice-table-status ${
-          normalizedStatus === "LUNAS"
-            ? "is-paid"
-            : normalizedStatus === "MENUNGGAK"
-              ? "is-overdue"
-              : normalizedStatus === "SEBAGIAN"
-                ? "is-partial"
-              : "is-pending"
-        }`;
-        statusBadge.textContent = normalizedStatus === "LUNAS"
-          ? "Lunas"
-          : normalizedStatus === "MENUNGGAK"
-            ? "Menunggak"
-            : normalizedStatus === "SEBAGIAN"
-              ? "Sebagian"
-            : "Belum dibayar";
-        statusCell.appendChild(statusBadge);
-        row.appendChild(statusCell);
-        const actionCell = document.createElement("td");
-        const actionButton = document.createElement("button");
-        actionButton.type = "button";
-        actionButton.className = "tenant-table-action invoice-view-action";
-        actionButton.dataset.invoiceId = invoice.invoiceId;
-        actionButton.textContent = "Lihat invoice";
-        actionButton.disabled = !tenantPayload.records.some(
-          (record) => record.tenantName === user?.tenantName,
-        );
-        if (actionButton.disabled) {
-          actionButton.title = "Data tenant untuk invoice ini belum tersedia.";
-        }
-        actionCell.appendChild(actionButton);
-        row.appendChild(actionCell);
-        invoicesEl.appendChild(row);
-      });
+      updateInvoiceYears();
+      renderInvoices();
       statusEl.textContent = tenantPayload.records.length
         ? "Data dan invoice hanya menampilkan milik akun Anda."
         : "Belum ada data tenant yang terhubung ke akun ini.";
       statusEl.className = "tenant-table-status";
-      if (!invoicePayload.records.length) {
-        const row = document.createElement("tr");
-        const cell = document.createElement("td");
-        cell.colSpan = 7;
-        cell.textContent = "Belum ada invoice.";
-        row.appendChild(cell);
-        invoicesEl.appendChild(row);
-      }
     } catch (error) {
       if (
         sequence !== refreshSequence ||

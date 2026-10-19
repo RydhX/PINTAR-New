@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { buildUtilitySchedule } from "./utility-payments.js";
 
-test("generates monthly electricity and telephone schedules for touched calendar months", () => {
+test("generates electricity and telephone schedules for exact contract months", () => {
   const schedule = buildUtilitySchedule({
     start_date: "2026-01-20",
     end_date: "2026-03-02",
@@ -10,7 +10,7 @@ test("generates monthly electricity and telephone schedules for touched calendar
     phone_cost_rp: 45000,
   });
 
-  assert.equal(schedule.length, 6);
+  assert.equal(schedule.length, 4);
   assert.deepEqual(schedule.slice(0, 2), [
     {
       utility_type: "LISTRIK",
@@ -25,14 +25,14 @@ test("generates monthly electricity and telephone schedules for touched calendar
       amount: 45000,
     },
   ]);
-  assert.equal(schedule.at(-1).billing_month, "2026-03-01");
-  assert.equal(schedule.at(-1).due_date, "2026-04-05");
+  assert.equal(schedule.at(-1).billing_month, "2026-02-01");
+  assert.equal(schedule.at(-1).due_date, "2026-03-05");
 });
 
 test("creates only schedules for utility types with an entered monthly amount", () => {
   const schedule = buildUtilitySchedule({
     start_date: "2026-01-01",
-    end_date: "2026-01-31",
+    end_date: "2026-02-01",
     electricity_cost_rp: 0,
     phone_cost_rp: null,
   });
@@ -55,6 +55,12 @@ test("does not generate schedules without a valid contract duration", () => {
   assert.deepEqual(buildUtilitySchedule({
     start_date: null,
     end_date: "2026-02-28",
+    electricity_cost_rp: 1,
+    phone_cost_rp: 1,
+  }), []);
+  assert.deepEqual(buildUtilitySchedule({
+    start_date: "2026-01-01",
+    end_date: "2026-01-31",
     electricity_cost_rp: 1,
     phone_cost_rp: 1,
   }), []);

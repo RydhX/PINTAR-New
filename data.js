@@ -25,6 +25,10 @@ for (let i = 1; i <= 17; i++) {
   const num = String(i).padStart(2, "0");
   L2_ROOMS[`L2_R${num}`] = { status: "vacant" };
 }
+const L11_ROOMS = {
+  L11_R01: { status: "vacant" },
+  L11_R02: { status: "vacant" },
+};
 const L3_DATA = generateFloorRooms("L3");
 const TYPICAL_FLOORS = Array.from({ length: 7 }, (_, index) => {
   const floorNumber = index + 4;
@@ -74,6 +78,14 @@ const DATA = {
           rooms: L3_DATA.rooms,
         },
         ...TYPICAL_FLOORS,
+        {
+          id: "L11",
+          name: "Lantai 11",
+          svg: "assets/gkp/GKP_L11.svg",
+          planId: "UNIT_GKP_L11",
+          svgPrefix: "L11_",
+          rooms: L11_ROOMS,
+        },
       ],
     },
     {

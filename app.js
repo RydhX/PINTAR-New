@@ -57,11 +57,9 @@ const clearTenantBtn = document.getElementById("clearTenantBtn");
 const contractRoomListEl = document.getElementById("contractRoomList");
 const installmentEditorEl = document.getElementById("installmentEditor");
 const installmentListEl = document.getElementById("installmentList");
-const installmentPaidTotalEl = document.getElementById("installmentPaidTotal");
-const installmentRemainingEl = document.getElementById("installmentRemaining");
 const partialPaymentEditorEl = document.getElementById("partialPaymentEditor");
 const initialPaymentInput = roomEditor.elements.namedItem("initial_payment_amount");
-const partialPaymentScheduleInput = roomEditor.elements.namedItem("partial_payment_schedule");
+const partialBalanceDueDateInput = roomEditor.elements.namedItem("partial_balance_due_date");
 const partialPaymentRemainingEl = document.getElementById("partialPaymentRemaining");
 const contractValueInput = roomEditor.elements.namedItem("contract_value");
 const rentalSchemeInput = roomEditor.elements.namedItem("rental_invoice_scheme");
@@ -199,6 +197,7 @@ const FLOOR_OPTIONS = [
     const floorNumber = index + 4;
     return { id: `L${floorNumber}`, label: `Lantai ${floorNumber}` };
   }),
+  { id: "L11", label: "Lantai 11" },
 ];
 
 const BASEMAP_OPTIONS = {
@@ -552,6 +551,7 @@ const MASTER_ROOM_FIELDS = {
   billing_period: "billingPeriod",
   installment_interval_months: "installmentIntervalMonths",
   initial_payment_amount: "initialPaymentAmount",
+  partial_balance_due_date: "partialBalanceDueDate",
   partial_payment_schedule: "partialPaymentSchedule",
   last_payment_date: "lastPaymentDate",
   electricity_cost_rp: "electricityCostRp",
@@ -763,18 +763,15 @@ const daysLeft = (end) =>
 
 function contractMonthCount(start, end) {
   if (!start || !end) return 0;
-  const startDate = new Date(`${start}T00:00:00`);
-  const endDate = new Date(`${end}T00:00:00`);
+  const startDate = new Date(`${start}T00:00:00.000Z`);
+  const endDate = new Date(`${end}T00:00:00.000Z`);
   if (
     Number.isNaN(startDate.getTime()) ||
     Number.isNaN(endDate.getTime()) ||
     endDate < startDate
   ) return 0;
-  const monthDifference =
-    (endDate.getFullYear() - startDate.getFullYear()) * 12 +
-    endDate.getMonth() -
-    startDate.getMonth();
-  return Math.max(1, monthDifference + (endDate.getDate() > startDate.getDate() ? 1 : 0));
+  return (endDate.getUTCFullYear() - startDate.getUTCFullYear()) * 12 +
+    endDate.getUTCMonth() - startDate.getUTCMonth();
 }
 
 function totalContractRent(monthlyRent, start, end) {
@@ -908,10 +905,11 @@ function openFloorPicker(building) {
   state.floorPickerOpen = true;
   if (lastDashboardBuildingId !== state.buildingId) updateDashboard();
   floorPickerTitleEl.textContent = building.name;
+  const floorOptions = DATA.buildings.find((item) => item.id === building.id)?.floors || [];
   floorPickerSelectEl.innerHTML =
     '<option value="">Pilih lantai</option>' +
-    FLOOR_OPTIONS.map(
-      (floor) => `<option value="${floor.id}">${floor.label}</option>`,
+    floorOptions.map(
+      (floor) => `<option value="${floor.id}">${floor.name}</option>`,
     ).join("");
 
   floorPickerEl.hidden = false;
@@ -937,8 +935,9 @@ function updateNavigationSelectors() {
   ).join("");
   buildingSelectEl.value = state.buildingId || "";
 
-  floorSelectEl.innerHTML = FLOOR_OPTIONS.map(
-    (floor) => `<option value="${floor.id}">${floor.label}</option>`,
+  const floors = getBuilding()?.floors || [];
+  floorSelectEl.innerHTML = floors.map(
+    (floor) => `<option value="${floor.id}">${floor.name}</option>`,
   ).join("");
   floorSelectEl.disabled = !state.buildingId;
   floorSelectEl.value = state.floorId || "";
@@ -1187,7 +1186,6 @@ async function showFloorPlan(token) {
     planId: f.planId,
     prefix: f.svgPrefix || f.id + "_",
     rooms: [...registry.values()].map((entry) => entry.el).filter(Boolean),
-    onZoomOutToSite: goBack,
   });
 }
 
@@ -1595,7 +1593,9 @@ function renderContractInvoices(room) {
     category.className = "contract-invoice-category";
     category.textContent = invoice.category === "UTILITAS"
       ? "Utilitas (Listrik & Telepon)"
-      : "Sewa Ruangan";
+      : invoice.invoice_label
+        ? `Sewa Ruangan · ${invoice.invoice_label}`
+        : "Sewa Ruangan";
     header.append(invoiceName, category);
 
     const detail = document.createElement("p");
@@ -1805,48 +1805,69 @@ function showDetail(roomId) {
     hasValue(room.contractValue) ? formatMoney(room.contractValue) : "",
   );
   const paymentScheme = String(room.payment || "").toLocaleLowerCase("id-ID");
+  const rentalInvoices = (room.invoices || []).filter(
+    (invoice) => invoice.category === "SEWA",
+  );
+  const invoiceAmount = (invoice) => Number(
+    invoice.total_amount ??
+      Number(invoice.rent_amount || 0) +
+      Number(invoice.electricity_amount || 0) +
+      Number(invoice.telephone_amount || 0),
+  );
+  const rentalTotal = rentalInvoices.reduce(
+    (total, invoice) => total + invoiceAmount(invoice),
+    0,
+  );
+  const rentalPaid = rentalInvoices.reduce(
+    (total, invoice) => total + Number(invoice.paid_amount || 0),
+    0,
+  );
   if (paymentScheme === "lunas") {
-    const billingPeriod = room.billingPeriod === "yearly" ? "Per-Tahun" : "Per-Bulan";
-    addRow("payment", "Periode pembayaran", billingPeriod);
+    addRow("payment", "Total invoice sewa", formatMoney(rentalTotal));
   } else if (paymentScheme === "termin") {
-    const installments = Array.isArray(room.installments) ? room.installments : [];
-    const paidTotal = installments.reduce(
-      (total, item) => total + (Number(item.amount) || 0),
-      0,
-    );
     const interval = numericAmount(room.installmentIntervalMonths);
     addRow(
       "payment",
       "Interval pembayaran",
       interval ? `Setiap ${interval} bulan` : "",
     );
-    const schedule = buildInstallmentSchedule(
-      room.contractValue,
-      room.start,
-      room.end,
-      interval || 0,
-      installments,
-    );
-    schedule.forEach((item) => {
-      addRow("payment", `Termin ${item.term} · ${item.dueDate}`, `${formatMoney(item.paid)} / ${formatMoney(item.amount)}`);
+    rentalInvoices.forEach((invoice, index) => {
+      const termName = invoice.invoice_label || `Termin ${index + 1}`;
+      addRow(
+        "payment",
+        `${termName} · Jatuh tempo ${formatDateIfValid(invoice.due_date)}`,
+        `${formatMoney(invoice.paid_amount || 0)} / ${formatMoney(invoiceAmount(invoice))}`,
+        invoice.status === "MENUNGGAK" ? "warn" : "",
+      );
     });
-    addRow("payment", "Total dibayar", formatMoney(paidTotal));
+    addRow("payment", "Total dibayar", formatMoney(rentalPaid));
     addRow(
       "payment",
       "Sisa pembayaran",
-      formatMoney(paymentBalance(room) || 0),
-      (paymentBalance(room) || 0) > 0 ? "warn" : "",
+      formatMoney(Math.max(rentalTotal - rentalPaid, 0)),
+      rentalTotal > rentalPaid ? "warn" : "",
     );
   } else if (["partial paid", "partial", "sebagian"].includes(paymentScheme)) {
-    const remaining = paymentBalance(room);
-    addRow("payment", "Uang muka / DP", formatMoney(room.initialPaymentAmount));
+    rentalInvoices.forEach((invoice) => {
+      addRow(
+        "payment",
+        `${invoice.invoice_label || "Invoice sewa"} · Jatuh tempo ${formatDateIfValid(invoice.due_date)}`,
+        formatMoney(invoiceAmount(invoice)),
+        invoice.status === "MENUNGGAK" ? "warn" : "",
+      );
+    });
+    addRow("payment", "Nominal DP", formatMoney(room.initialPaymentAmount));
     addRow(
       "payment",
-      "Sisa untuk jadwal khusus",
-      remaining === null ? "" : formatMoney(remaining),
-      remaining > 0 ? "warn" : "",
+      "Tanggal jatuh tempo pelunasan sisa",
+      formatDateIfValid(room.partialBalanceDueDate),
     );
-    addRow("payment", "Jadwal pelunasan", room.partialPaymentSchedule);
+    addRow(
+      "payment",
+      "Sisa pembayaran",
+      formatMoney(Math.max(rentalTotal - rentalPaid, 0)),
+      rentalTotal > rentalPaid ? "warn" : "",
+    );
   }
   addRow("general", "Luas", hasValue(room.area) ? `${room.area} m²` : "");
   addRow("payment", "Mulai sewa", formatDateIfValid(room.start));
@@ -1919,10 +1940,9 @@ const EDITABLE_ROOM_FIELDS = [
   "end_date",
   "contract_value",
   "rental_invoice_scheme",
-  "separate_utility_invoices",
   "installment_interval_months",
   "initial_payment_amount",
-  "partial_payment_schedule",
+  "partial_balance_due_date",
   "last_payment_date",
   "electricity_cost_rp",
   "electricity_kwh",
@@ -1960,10 +1980,9 @@ function populateRoomEditor(
     end_date: dateInputValue(room.end),
     contract_value: numericInputValue(room.contractValue),
     rental_invoice_scheme: isNew ? "LUNAS" : rentalScheme,
-    separate_utility_invoices: room.separateUtilityInvoices !== false,
     installment_interval_months: room.installmentIntervalMonths || "6",
     initial_payment_amount: numericInputValue(room.initialPaymentAmount),
-    partial_payment_schedule: room.partialPaymentSchedule || "",
+    partial_balance_due_date: dateInputValue(room.partialBalanceDueDate),
     last_payment_date: dateInputValue(room.lastPaymentDate),
     electricity_cost_rp: numericInputValue(room.electricityCostRp),
     electricity_kwh: numericInputValue(room.electricityKwh),
@@ -1996,7 +2015,7 @@ function populateRoomEditor(
     if (control.hasAttribute("data-currency")) updateCurrencyPreview(field, values[field]);
   });
   renderContractRoomPicker(roomId, room, rooms);
-  renderInstallments(room.installments || []);
+  renderInstallments();
   updateInstallmentMode();
 }
 
@@ -2263,112 +2282,56 @@ function sanitizeCurrencyWhileTyping(input) {
   updateCurrencyPreview(input.name, digits);
 }
 
-function readInstallments() {
-  return Array.from(installmentListEl.querySelectorAll(".installment-amount"))
-    .map((input) => ({
-      term: Number(input.dataset.term),
-      amount: numericInputValue(input.value),
-    }))
-    .filter((item) => item.amount !== "");
-}
-
 function addMonths(value, months) {
-  const date = new Date(`${value}T00:00:00`);
+  const date = new Date(`${value.slice(0, 7)}-01T00:00:00.000Z`);
   if (Number.isNaN(date.getTime())) return null;
-  const targetMonth = date.getMonth() + months;
-  const lastDay = new Date(date.getFullYear(), targetMonth + 1, 0).getDate();
-  return new Date(date.getFullYear(), targetMonth, Math.min(date.getDate(), lastDay));
+  date.setUTCMonth(date.getUTCMonth() + months);
+  return date;
 }
 
-function installmentCount(start, end, interval) {
-  if (!start || !end || !Number.isInteger(interval) || interval < 1) return 0;
-  const startDate = new Date(`${start}T00:00:00`);
-  const endDate = new Date(`${end}T00:00:00`);
-  if (Number.isNaN(startDate.getTime()) || Number.isNaN(endDate.getTime()) || endDate < startDate) {
-    return 0;
-  }
-  let months = (endDate.getFullYear() - startDate.getFullYear()) * 12 +
-    endDate.getMonth() - startDate.getMonth();
-  const anniversary = addMonths(start, months);
-  if (anniversary && anniversary < endDate) months += 1;
-  return Math.max(1, Math.ceil(months / interval));
+function formatInvoiceMonth(timestamp) {
+  return new Intl.DateTimeFormat("id-ID", {
+    month: "short",
+    year: "numeric",
+    timeZone: "UTC",
+  }).format(timestamp).replace(/\./g, "");
 }
 
-function buildInstallmentSchedule(contractValue, start, end, interval, paidInstallments = []) {
-  const total = totalContractRent(contractValue, start, end);
-  const count = installmentCount(dateInputValue(start), dateInputValue(end), Number(interval));
-  if (total === null || total <= 0 || !count) return [];
-  const paidByTerm = new Map(
-    paidInstallments.map((item) => [Number(item.term), numericAmount(item.amount) || 0]),
-  );
-  const baseAmount = Math.floor(total / count);
-  return Array.from({ length: count }, (_, index) => {
-    const term = index + 1;
-    const dueDate = addMonths(dateInputValue(start), index * Number(interval));
-    return {
-      term,
-      amount: term === count ? total - baseAmount * (count - 1) : baseAmount,
-      paid: paidByTerm.get(term) || 0,
-      dueDate: dueDate
-        ? dueDate.toLocaleDateString("id-ID", { day: "numeric", month: "short", year: "numeric" })
-        : "-",
-    };
-  });
-}
-
-function renderInstallments(paidInstallments) {
+function renderInstallments() {
   installmentListEl.replaceChildren();
   const interval = Number(installmentIntervalInput.value);
-  const schedule = buildInstallmentSchedule(
-    numericInputValue(contractValueInput.value),
-    startDateInput.value,
-    endDateInput.value,
-    interval,
-    paidInstallments,
-  );
-  schedule.forEach((installment) => {
-    const row = document.createElement("div");
-    row.className = "installment-row";
-    const terms = document.createElement("div");
-    terms.className = "installment-due";
-    terms.textContent = `Termin ${installment.term} · ${installment.dueDate} · ${fmtRupiah(installment.amount)}`;
-    const label = document.createElement("label");
-    const labelText = document.createElement("span");
-    labelText.textContent = "Nominal dibayar (Rp)";
-    const input = document.createElement("input");
-    input.className = "installment-amount";
-    input.dataset.term = String(installment.term);
-    input.type = "text";
-    input.inputMode = "numeric";
-    input.autocomplete = "off";
-    input.value = formatCurrencyInput(installment.paid);
-    label.append(labelText, input);
-    row.append(terms, label);
-    installmentListEl.appendChild(row);
-  });
-  if (!schedule.length && rentalSchemeInput.value === "TERMIN") {
+  const monthlyRent = numericInputValue(contractValueInput.value);
+  const monthCount = contractMonthCount(startDateInput.value, endDateInput.value);
+  if (
+    monthlyRent === "" ||
+    monthlyRent <= 0 ||
+    !monthCount ||
+    ![1, 3, 6, 12].includes(interval)
+  ) {
     const hint = document.createElement("p");
     hint.className = "detail-empty";
-    hint.textContent = "Isi nilai kontrak dan rentang tanggal kontrak untuk membuat jadwal termin.";
+    hint.textContent = "Isi nilai sewa dan rentang kontrak minimal satu bulan penuh untuk melihat jadwal termin.";
     installmentListEl.appendChild(hint);
+    return;
   }
-  updateInstallmentSummary();
-}
 
-function updateInstallmentSummary() {
-  const paidTotal = readInstallments().reduce((total, item) => total + item.amount, 0);
-  const contractValue = totalContractRent(
-    numericInputValue(contractValueInput.value),
-    startDateInput.value,
-    endDateInput.value,
-  );
-  const remaining = Math.max((contractValue || 0) - paidTotal, 0);
-  installmentPaidTotalEl.textContent = fmtRupiah(paidTotal);
-  installmentRemainingEl.textContent = fmtRupiah(remaining);
-  installmentRemainingEl.classList.toggle(
-    "installment-overpaid",
-    contractValue !== null && paidTotal > contractValue,
-  );
+  const monthlyRentCents = Math.round(monthlyRent * 100);
+  for (let offset = 0, term = 1; offset < monthCount; offset += interval, term += 1) {
+    const billedMonths = Math.min(interval, monthCount - offset);
+    const periodStart = addMonths(startDateInput.value, offset);
+    const periodEnd = addMonths(startDateInput.value, offset + billedMonths - 1);
+    const row = document.createElement("div");
+    row.className = "installment-row";
+    row.classList.add("installment-preview-row");
+    const terms = document.createElement("div");
+    terms.className = "installment-due";
+    terms.textContent =
+      `Termin ${term}: ${formatInvoiceMonth(periodStart)} - ${formatInvoiceMonth(periodEnd)}`;
+    const amount = document.createElement("strong");
+    amount.textContent = fmtRupiah((monthlyRentCents * billedMonths) / 100);
+    row.append(terms, amount);
+    installmentListEl.appendChild(row);
+  }
 }
 
 function updatePartialPaymentSummary() {
@@ -2385,7 +2348,7 @@ function updatePartialPaymentSummary() {
 }
 
 function updateInstallmentSchedule() {
-  renderInstallments(readInstallments());
+  renderInstallments();
 }
 
 function updateInstallmentMode() {
@@ -2394,26 +2357,12 @@ function updateInstallmentMode() {
   const isPartial = scheme === "PARTIAL";
   installmentEditorEl.hidden = !isInstallment;
   partialPaymentEditorEl.hidden = !isPartial;
+  installmentIntervalInput.required = isInstallment;
+  initialPaymentInput.required = isPartial;
+  partialBalanceDueDateInput.required = isPartial;
   if (isInstallment) updateInstallmentSchedule();
   if (isPartial) updatePartialPaymentSummary();
 }
-
-installmentListEl.addEventListener("input", (event) => {
-  if (!event.target.matches(".installment-amount")) return;
-  sanitizeCurrencyWhileTyping(event.target);
-  updateInstallmentSummary();
-});
-
-installmentListEl.addEventListener("focusin", (event) => {
-  if (!event.target.matches(".installment-amount")) return;
-  const amount = numericInputValue(event.target.value);
-  event.target.value = amount === "" ? "" : String(amount);
-});
-
-installmentListEl.addEventListener("focusout", (event) => {
-  if (!event.target.matches(".installment-amount")) return;
-  event.target.value = formatCurrencyInput(event.target.value);
-});
 
 contractValueInput.addEventListener("input", () => {
   updateInstallmentSchedule();
@@ -2491,9 +2440,7 @@ roomEditor.addEventListener("submit", async (event) => {
     ?.floors.find((item) => item.id === floorId);
   if (!activeRoomId || !buildingId || !floorId || !floor) return;
 
-  const installments = readInstallments();
   const contractValue = numericInputValue(contractValueInput.value);
-  const totalPaid = installments.reduce((total, item) => total + item.amount, 0);
   const rentalScheme = rentalSchemeInput.value;
   const paymentMode = {
     LUNAS: "lunas",
@@ -2524,24 +2471,10 @@ roomEditor.addEventListener("submit", async (event) => {
     return;
   }
   if (paymentMode === "termin") {
-    const expectedCount = installmentCount(
-      startDateInput.value,
-      endDateInput.value,
-      Number(installmentIntervalInput.value),
-    );
-    if (!expectedCount) {
-      editorStatusEl.textContent = "Isi rentang tanggal kontrak yang valid untuk membuat jadwal termin.";
+    if (![1, 3, 6, 12].includes(Number(installmentIntervalInput.value))) {
+      editorStatusEl.textContent = "Pilih interval termin 1, 3, 6, atau 12 bulan.";
       setActiveTab(document.getElementById("editorPaymentTab"));
-      startDateInput.focus();
-      return;
-    }
-    if (installments.some((item) => item.amount > 0) && installments.length > expectedCount) {
-      editorStatusEl.textContent = "Pembayaran termin melebihi jumlah jadwal yang dibuat.";
-      return;
-    }
-    if (totalPaid > totalContractAmount) {
-      editorStatusEl.textContent = "Total pembayaran termin tidak boleh melebihi total sewa kontrak.";
-      setActiveTab(document.getElementById("editorPaymentTab"));
+      installmentIntervalInput.focus();
       return;
     }
   }
@@ -2553,10 +2486,14 @@ roomEditor.addEventListener("submit", async (event) => {
       initialPaymentInput.focus();
       return;
     }
-    if (!partialPaymentScheduleInput.value.trim()) {
-      editorStatusEl.textContent = "Isi jadwal pelunasan sesuai kesepakatan.";
+    if (
+      !partialBalanceDueDateInput.value ||
+      partialBalanceDueDateInput.value < startDateInput.value
+    ) {
+      editorStatusEl.textContent =
+        "Isi tanggal jatuh tempo pelunasan sisa yang tidak lebih awal dari tanggal mulai kontrak.";
       setActiveTab(document.getElementById("editorPaymentTab"));
-      partialPaymentScheduleInput.focus();
+      partialBalanceDueDateInput.focus();
       return;
     }
   }
@@ -2606,10 +2543,6 @@ roomEditor.addEventListener("submit", async (event) => {
     contract_id: isNewRegistration ? "" : floor.rooms[activeRoomId].contractId || "",
   };
   EDITABLE_ROOM_FIELDS.forEach((field) => {
-    if (field === "separate_utility_invoices") {
-      record[field] = roomEditor.elements.namedItem(field).checked;
-      return;
-    }
     const value = String(formData.get(field) || "").trim();
     record[field] = [
       "area_m2",
@@ -2637,10 +2570,11 @@ roomEditor.addEventListener("submit", async (event) => {
     paymentMode === "termin" ? Number(installmentIntervalInput.value) : "";
   record.initial_payment_amount =
     paymentMode === "partial" ? numericInputValue(initialPaymentInput.value) : "";
-  record.partial_payment_schedule =
-    paymentMode === "partial" ? partialPaymentScheduleInput.value.trim() : "";
+  record.partial_balance_due_date =
+    paymentMode === "partial" ? partialBalanceDueDateInput.value : "";
+  record.separate_utility_invoices = true;
   if (isNewRegistration) record.occupancy_status = "occupied";
-  record.installment_payments = JSON.stringify(paymentMode === "termin" ? installments : []);
+  record.installment_payments = JSON.stringify([]);
 
   const saveButton = roomEditor.querySelector('[type="submit"]');
   saveButton.disabled = true;

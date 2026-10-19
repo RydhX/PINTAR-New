@@ -15,6 +15,8 @@ function validContract(overrides = {}) {
     occupancy_status: "occupied",
     payment_status: "Termin",
     contract_value: 1000000,
+    start_date: "2026-01-01",
+    end_date: "2027-01-01",
     installment_payments: '[{"term":1,"amount":250000}]',
     ...overrides,
   };
@@ -38,7 +40,7 @@ test("normalizes numeric and installment contract input", () => {
   ]);
 });
 
-test("normalizes the three rental invoice schemes and utility separation", () => {
+test("normalizes the three rental invoice schemes and requires separate utilities", () => {
   const contract = normalizeContract(validContract({
     rental_invoice_scheme: "TERMIN",
     installment_interval_months: 3,
@@ -49,7 +51,7 @@ test("normalizes the three rental invoice schemes and utility separation", () =>
 
   assert.equal(contract.rental_invoice_scheme, "TERMIN");
   assert.equal(contract.payment_status, "Termin");
-  assert.equal(contract.separate_utility_invoices, false);
+  assert.equal(contract.separate_utility_invoices, true);
 });
 
 test("rejects invalid calendar dates and payment states", () => {
@@ -64,6 +66,13 @@ test("rejects invalid calendar dates and payment states", () => {
   assert.throws(
     () => normalizeContract(validContract({ separate_utility_invoices: "false" })),
     /must be a boolean/,
+  );
+  assert.throws(
+    () => normalizeContract(validContract({
+      start_date: "2026-01-01",
+      end_date: "2026-01-31",
+    })),
+    /minimal satu bulan kalender penuh/,
   );
   assert.throws(
     () => normalizeContract(validContract({
@@ -102,7 +111,7 @@ test("validates Partial down payment against full contract rent", () => {
     end_date: "2029-11-01",
     contract_value: 150000000,
     initial_payment_amount: 500000000,
-    partial_payment_schedule: "Sisa dibayar dalam dua termin.",
+    partial_balance_due_date: "2027-05-01",
   }));
   assert.equal(contract.payment_status, "Partial Paid");
   assert.equal(contract.initial_payment_amount, 500000000);
@@ -113,9 +122,30 @@ test("validates Partial down payment against full contract rent", () => {
       end_date: "2029-11-01",
       contract_value: 150000000,
       initial_payment_amount: 5400000001,
-      partial_payment_schedule: "Jadwal pelunasan.",
+      partial_balance_due_date: "2027-05-01",
     })),
     /tidak melebihi total sewa kontrak/,
+  );
+  assert.throws(
+    () => normalizeContract(validContract({
+      rental_invoice_scheme: "PARTIAL",
+      start_date: "2026-11-01",
+      end_date: "2029-11-01",
+      contract_value: 150000000,
+      initial_payment_amount: 500000000,
+    })),
+    /tanggal jatuh tempo pelunasan sisa wajib diisi/,
+  );
+  assert.throws(
+    () => normalizeContract(validContract({
+      rental_invoice_scheme: "PARTIAL",
+      start_date: "2026-11-01",
+      end_date: "2029-11-01",
+      contract_value: 150000000,
+      initial_payment_amount: 500000000,
+      partial_balance_due_date: "2026-10-31",
+    })),
+    /tidak boleh sebelum tanggal mulai kontrak/,
   );
 });
 
