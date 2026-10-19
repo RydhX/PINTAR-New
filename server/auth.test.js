@@ -35,6 +35,29 @@ test("requires an admin password in production", () => {
   assert.match(result.stderr, /ADMIN_PASSWORD must be configured in production/);
 });
 
+test("disables hard-coded demo accounts in production", () => {
+  const result = spawnSync(
+    process.execPath,
+    [
+      "--input-type=module",
+      "-e",
+      "const { authenticateCredentials } = await import('./server/auth.js'); console.log(JSON.stringify(['admin', 'internal', 'client'].map((username) => authenticateCredentials(username, username === 'admin' ? 'production-secret' : `${username}123`)?.role ?? null)))",
+    ],
+    {
+      cwd: process.cwd(),
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        NODE_ENV: "production",
+        DATABASE_URL: "postgresql://localhost/pintar",
+        ADMIN_PASSWORD: "production-secret",
+      },
+    },
+  );
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(JSON.parse(result.stdout), ["admin", null, null]);
+});
+
 test("limits client mock invoices to its own tenant", () => {
   const clientInvoices = invoicesForUser({ role: "client", tenantName: "PT Coba" });
   const internalInvoices = invoicesForUser({ role: "internal" });

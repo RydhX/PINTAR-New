@@ -13,6 +13,13 @@ app.disable("x-powered-by");
 app.use(express.json({ limit: "64kb" }));
 
 app.use("/api/auth", authRouter);
+app.get("/api/config", (_req, res) => {
+  res.set("Cache-Control", "no-store");
+  res.json({
+    supabaseUrl: process.env.SUPABASE_URL || "",
+    supabaseAnonKey: process.env.SUPABASE_ANON_KEY || "",
+  });
+});
 app.get("/api/health", async (_req, res, next) => {
   try {
     await pool.query("SELECT 1");

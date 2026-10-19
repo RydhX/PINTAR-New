@@ -37,10 +37,34 @@ Prasyarat: Node.js 22+, PostgreSQL, dan npm.
 npm install
 Copy-Item .env.example .env
 npm run db:init
+npm run build
 npm start
 ```
 
 Set `DATABASE_URL` di `.env` agar menunjuk database PostgreSQL lokal.
+
+Untuk mengaktifkan Supabase Client SDK, isi `SUPABASE_URL` dan
+`SUPABASE_ANON_KEY` di environment aplikasi. Nilai publik ini dikirim ke browser
+melalui `/api/config`; jangan menaruh service-role key di client. Jika salah satu
+nilai belum tersedia, aplikasi melanjutkan tanpa Supabase dan memberi peringatan
+di console browser. Data aplikasi saat ini tetap menggunakan API Express dan
+PostgreSQL.
+
+`npm run build` membuat bundle produksi di `dist/`, termasuk server, modul
+frontend, konfigurasi data, dan aset peta. Jalankan `npm start` untuk menyajikan
+build tersebut. Di Render, isi environment variables yang diminta pada
+`render.yaml`; kedua variabel Supabase bersifat opsional sampai fitur aplikasi
+membutuhkan koneksi Supabase. Gunakan `DATABASE_URL` dari Supabase Session
+Pooler agar backend Node.js dapat terhubung; aplikasi juga mewajibkan
+`ADMIN_PASSWORD` yang kuat saat berjalan dalam mode produksi.
+
+Blueprint Render memakai runtime Node dan didefinisikan di `render.yaml`.
+Jalankan seluruh isi `supabase/schema.sql` di Supabase SQL Editor sebelum
+menghubungkan service. Skrip tersebut membuat skema aplikasi, PostGIS untuk
+fitur denah, indeks spasial, dan kebijakan RLS yang menolak akses langsung dari
+role `anon`/`authenticated`; backend mengakses database melalui `DATABASE_URL`.
+Gunakan `.env.production.example` sebagai daftar nama variabel tanpa nilai
+rahasia.
 
 ## API
 
@@ -64,7 +88,7 @@ Gunakan akun berikut pada halaman login:
 | Internal | `internal` | `internal123` | Peta, seluruh data tenant, ekspor; hanya baca |
 | Client Tenant | `client` | `client123` | Ketersediaan ruang, data tenant PT Coba, dan invoice mock miliknya |
 
-Login ini hanya untuk prototipe: akun, sesi, dan invoice berada di memori; sesi berakhir saat server dimulai ulang. Jangan gunakan kredensial ini atau mekanisme ini untuk produksi. Autentikasi produksi memerlukan penyimpanan/password hashing, sesi yang dikelola dengan aman, perlindungan CSRF bila memakai cookie, dan proses provisioning user-tenant yang tervalidasi.
+Login ini hanya untuk prototipe: akun demo `internal`/`client`, sesi, dan invoice berada di memori; sesi berakhir saat server dimulai ulang. Akun demo non-admin dinonaktifkan dalam mode produksi. Jangan gunakan kredensial demo atau mekanisme sesi ini sebagai autentikasi produksi tanpa lebih dulu menambahkan penyimpanan sesi, provisioning user-tenant yang tervalidasi, serta kontrol keamanan yang sesuai.
 
 Halaman login menyediakan pilihan akun demo yang mengisi kredensial secara otomatis. Dashboard mempertahankan peta WebGIS dan memakai layout panel mengambang untuk filter ruang dan detail unit. Route `/dashboard` dan `/login` dilayani sebagai entry point frontend; login tetap diverifikasi oleh API.
 

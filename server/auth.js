@@ -20,19 +20,23 @@ const demoUsers = Object.freeze([
     role: "admin",
     displayName: "Admin",
   },
-  {
-    username: "internal",
-    password: "internal123",
-    role: "internal",
-    displayName: "Finance Internal",
-  },
-  {
-    username: "client",
-    password: "client123",
-    role: "client",
-    displayName: "Client PT Coba",
-    tenantName: "PT Coba",
-  },
+  ...(process.env.NODE_ENV === "production"
+    ? []
+    : [
+        {
+          username: "internal",
+          password: "internal123",
+          role: "internal",
+          displayName: "Finance Internal",
+        },
+        {
+          username: "client",
+          password: "client123",
+          role: "client",
+          displayName: "Client PT Coba",
+          tenantName: "PT Coba",
+        },
+      ]),
 ]);
 const sessions = new Map();
 
