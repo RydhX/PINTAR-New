@@ -7,6 +7,7 @@ import { tenantsRouter } from "./server/tenants.js";
 
 const app = express();
 const root = path.dirname(fileURLToPath(import.meta.url));
+const staticRoot = process.env.VERCEL ? path.join(root, "public") : root;
 
 app.disable("x-powered-by");
 app.use(express.json({ limit: "64kb" }));
@@ -32,11 +33,11 @@ app.use(["/server", "/node_modules"], (_req, res) => {
   res.sendStatus(404);
 });
 app.get(["/login", "/dashboard"], (_req, res, next) => {
-  res.sendFile(path.join(root, "index.html"), (error) => {
+  res.sendFile(path.join(staticRoot, "index.html"), (error) => {
     if (error) next(error);
   });
 });
-app.use(express.static(root, { index: "index.html" }));
+app.use(express.static(staticRoot, { index: "index.html" }));
 
 app.use((error, _req, res, _next) => {
   console.error("API request failed:", error);

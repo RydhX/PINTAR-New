@@ -1,5 +1,10 @@
 {
   "buildCommand": "npm run build",
+  "functions": {
+    "index.js": {
+      "includeFiles": "public/**"
+    }
+  },
   "rewrites": [
     { "source": "/login", "destination": "/index.html" },
     { "source": "/dashboard", "destination": "/index.html" }
