@@ -225,3 +225,10 @@ WHERE contract.start_date IS NOT NULL
   AND contract.end_date >= contract.start_date
   AND utility.amount IS NOT NULL
 ON CONFLICT (contract_id, utility_type, billing_month) DO NOTHING;
+
+ALTER TABLE tenants ENABLE ROW LEVEL SECURITY;
+ALTER TABLE tenant_contracts ENABLE ROW LEVEL SECURITY;
+ALTER TABLE client_users ENABLE ROW LEVEL SECURITY;
+ALTER TABLE utility_payments ENABLE ROW LEVEL SECURITY;
+ALTER TABLE tenant_invoices ENABLE ROW LEVEL SECURITY;
+ALTER TABLE contract_rooms ENABLE ROW LEVEL SECURITY;
