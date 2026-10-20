@@ -185,7 +185,6 @@ const ClientPortal = (() => {
     }
     items.forEach((item) => {
       const total = item.paid + item.outstanding;
-      if (!total) return;
       const row = document.createElement("div");
       row.className = "invoice-chart-row";
       row.setAttribute("role", "listitem");
