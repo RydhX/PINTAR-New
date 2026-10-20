@@ -720,7 +720,8 @@ tenantsRouter.get("/invoices", async (req, res, next) => {
   }
   try {
     const { rows } = await pool.query(
-      `SELECT invoice.id, invoice.invoice_number, invoice.category, invoice.invoice_label,
+      `SELECT invoice.id, invoice.contract_id, invoice.tenant_id,
+        invoice.invoice_number, invoice.category, invoice.invoice_label,
         tenant.name AS tenant_name, invoice.billing_month::text,
         invoice.billing_date::text, invoice.due_date::text,
         invoice.period_start::text, invoice.period_end::text,
@@ -742,6 +743,8 @@ tenantsRouter.get("/invoices", async (req, res, next) => {
     res.json({
       records: rows.map((row) => ({
         id: row.id,
+        contractId: row.contract_id,
+        tenantId: row.tenant_id,
         invoiceId: row.invoice_number,
         category: row.category,
         invoiceLabel: row.invoice_label,

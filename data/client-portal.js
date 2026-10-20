@@ -16,6 +16,8 @@ const ClientPortal = (() => {
   const invoiceItemRowsEl = document.getElementById("invoiceItemRows");
   const printButton = document.getElementById("invoicePrintButton");
   const backButton = document.getElementById("invoiceBackButton");
+  const downloadInvoicesButton = document.getElementById("downloadTenantInvoices");
+  const invoiceTenantHeader = document.getElementById("clientInvoiceTenantHeader");
   const currency = new Intl.NumberFormat("id-ID", {
     style: "currency",
     currency: "IDR",
@@ -153,6 +155,10 @@ const ClientPortal = (() => {
       categoryBadge.textContent = category === "utility"
         ? "Utilitas"
         : `Sewa Ruangan${invoice.invoiceLabel ? ` · ${invoice.invoiceLabel}` : ""}`;
+      const tenantCell = document.createElement("td");
+      tenantCell.textContent = invoice.tenantName || "-";
+      tenantCell.hidden = Auth.currentUser?.role !== "admin";
+      row.appendChild(tenantCell);
       [
         invoice.invoiceId,
         categoryBadge,
@@ -165,6 +171,7 @@ const ClientPortal = (() => {
         else cell.textContent = value;
         row.appendChild(cell);
       });
+      row.insertBefore(tenantCell, row.children[1].nextSibling);
       const statusCell = document.createElement("td");
       const statusBadge = document.createElement("span");
       const status = normalizedStatus(invoice);
@@ -192,9 +199,7 @@ const ClientPortal = (() => {
       actionButton.className = "tenant-table-action invoice-view-action";
       actionButton.dataset.invoiceId = invoice.invoiceId;
       actionButton.textContent = "Lihat invoice";
-      actionButton.disabled = !tenantRecords.some(
-        (record) => record.tenantName === Auth.currentUser?.tenantName,
-      );
+      actionButton.disabled = !recordsForInvoice(invoice).length;
       if (actionButton.disabled) {
         actionButton.title = "Data tenant untuk invoice ini belum tersedia.";
       }
@@ -206,7 +211,7 @@ const ClientPortal = (() => {
     if (!pageInvoices.length) {
       const row = document.createElement("tr");
       const cell = document.createElement("td");
-      cell.colSpan = 7;
+      cell.colSpan = Auth.currentUser?.role === "admin" ? 8 : 7;
       cell.textContent = invoiceRecords.length
         ? "Tidak ada invoice yang sesuai dengan filter."
         : "Belum ada invoice.";
@@ -248,8 +253,11 @@ const ClientPortal = (() => {
     renderInvoices();
   });
 
-  function recordsForInvoice() {
-    const tenantName = Auth.currentUser?.tenantName;
+  function recordsForInvoice(invoice) {
+    if (invoice?.contractId) {
+      return tenantRecords.filter((record) => record.id === invoice.contractId);
+    }
+    const tenantName = invoice?.tenantName || Auth.currentUser?.tenantName;
     return tenantRecords.filter((record) => record.tenantName === tenantName);
   }
 
@@ -257,7 +265,7 @@ const ClientPortal = (() => {
     if (invoice.rentAmountRp !== undefined) {
       return readAmount(invoice.amountRp, "total tagihan");
     }
-    const records = recordsForInvoice();
+    const records = recordsForInvoice(invoice);
     const utilitiesTotal = records.reduce(
       (total, record) =>
         total +
@@ -283,8 +291,7 @@ const ClientPortal = (() => {
   }
 
   function showInvoice(invoice, actionButton) {
-    const tenantName = Auth.currentUser?.tenantName;
-    const associatedRecords = recordsForInvoice();
+    const associatedRecords = recordsForInvoice(invoice);
     const tenant = associatedRecords[0];
     if (!tenant) {
       throw new Error("Data tenant untuk invoice ini tidak tersedia.");
@@ -336,7 +343,7 @@ const ClientPortal = (() => {
       invoice.billingDate ? formatDate(invoice.billingDate) : dateFormatter.format(new Date()),
     );
     setInvoiceText("invoiceDueDate", formatDate(invoice.dueDate));
-    setInvoiceText("invoiceTenantName", tenant.tenantName || tenantName);
+    setInvoiceText("invoiceTenantName", tenant.tenantName || invoice.tenantName);
     setInvoiceText("invoiceTenantPic", tenant.pic ? `PIC: ${tenant.pic}` : "");
     setInvoiceText("invoiceTenantContact", tenant.contact ? `Kontak: ${tenant.contact}` : "");
     setInvoiceText("invoicePeriod", period);
@@ -409,6 +416,55 @@ const ClientPortal = (() => {
     document.body.classList.remove("printing-invoice");
   });
 
+  function csvField(value) {
+    let text = String(value ?? "");
+    if (/^[\t\r =+\-@]/.test(text)) text = `'${text}`;
+    return `"${text.replaceAll('"', '""')}"`;
+  }
+
+  downloadInvoicesButton.addEventListener("click", () => {
+    try {
+      const rows = [
+        [
+          "No. Invoice",
+          "Tenant",
+          "Kategori",
+          "Label",
+          "Periode",
+          "Tanggal Terbit",
+          "Jatuh Tempo",
+          "Jumlah",
+          "Dibayar",
+          "Sisa Tagihan",
+          "Status",
+        ],
+        ...filteredInvoices().map((invoice) => [
+          invoice.invoiceId,
+          invoice.tenantName || Auth.currentUser?.tenantName || "",
+          invoice.category,
+          invoice.invoiceLabel,
+          invoice.period,
+          invoice.billingDate,
+          invoice.dueDate,
+          invoiceTotal(invoice),
+          invoice.paidAmountRp ?? 0,
+          outstandingAmount(invoice),
+          invoice.status,
+        ]),
+      ];
+      const csv = `\uFEFF${rows.map((row) => row.map(csvField).join(",")).join("\r\n")}`;
+      const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `invoice-tenant-${new Date().toISOString().slice(0, 10)}.csv`;
+      link.click();
+      window.setTimeout(() => URL.revokeObjectURL(url), 0);
+    } catch (error) {
+      statusEl.textContent = `Gagal mengunduh data invoice: ${error.message}`;
+      statusEl.className = "tenant-table-status is-error";
+    }
+  });
+
   function addDetail(parent, label, value) {
     if (value === null || value === undefined || value === "") return;
     const item = document.createElement("div");
@@ -420,9 +476,39 @@ const ClientPortal = (() => {
     parent.appendChild(item);
   }
 
+  async function fetchTenantRecords(headers, user) {
+    const records = [];
+    let page = 1;
+    let totalPages = 1;
+    do {
+      const response = await fetch(`/api/tenants?page=${page}&pageSize=100`, {
+        headers,
+        cache: "no-store",
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || "Gagal memuat data tenant.");
+      records.push(...payload.records);
+      totalPages = user?.role === "admin" ? payload.meta.totalPages : 1;
+      page += 1;
+    } while (page <= totalPages);
+    return { records };
+  }
+
   async function refresh() {
     const sequence = ++refreshSequence;
     const requestedUser = Auth.currentUser;
+    const isAdmin = requestedUser?.role === "admin";
+    downloadInvoicesButton.hidden = !isAdmin;
+    invoiceTenantHeader.hidden = !isAdmin;
+    document.getElementById("clientPortalEyebrow").textContent = isAdmin
+      ? "ADMINISTRASI"
+      : "PORTAL CLIENT";
+    document.getElementById("clientPortalHeading").textContent = isAdmin
+      ? "Data Tenant & Invoice"
+      : "Data Saya & Invoice";
+    document.querySelector(".client-invoice-heading").textContent = isAdmin
+      ? "Invoice Tenant"
+      : "Invoice Saya";
     statusEl.textContent = "Memuat data akun…";
     statusEl.className = "tenant-table-status is-loading";
     detailsEl.replaceChildren();
@@ -434,15 +520,11 @@ const ClientPortal = (() => {
     renderInvoices();
     try {
       const headers = Auth.headers();
-      const [tenantResponse, invoiceResponse] = await Promise.all([
-        fetch("/api/tenants?page=1&pageSize=100", { headers, cache: "no-store" }),
+      const [tenantRecordsResult, invoiceResponse] = await Promise.all([
+        fetchTenantRecords(headers, requestedUser),
         fetch("/api/invoices", { headers, cache: "no-store" }),
       ]);
-      const [tenantPayload, invoicePayload] = await Promise.all([
-        tenantResponse.json(),
-        invoiceResponse.json(),
-      ]);
-      if (!tenantResponse.ok) throw new Error(tenantPayload.error || "Gagal memuat data tenant.");
+      const invoicePayload = await invoiceResponse.json();
       if (!invoiceResponse.ok) throw new Error(invoicePayload.error || "Gagal memuat invoice.");
       if (
         sequence !== refreshSequence ||
@@ -450,10 +532,12 @@ const ClientPortal = (() => {
       ) return;
 
       const user = requestedUser;
-      tenantRecords = tenantPayload.records;
+      tenantRecords = tenantRecordsResult.records;
       invoiceRecords = invoicePayload.records;
-      tenantEl.textContent = user?.tenantName ? `Akun terhubung ke ${user.tenantName}` : "";
-      tenantPayload.records.forEach((record) => {
+      tenantEl.textContent = user?.role === "admin"
+        ? `${tenantRecords.length} kontrak tenant`
+        : user?.tenantName ? `Akun terhubung ke ${user.tenantName}` : "";
+      tenantRecords.forEach((record) => {
         const card = document.createElement("article");
         card.className = "client-tenant-card";
         const heading = document.createElement("h3");
@@ -474,9 +558,11 @@ const ClientPortal = (() => {
       });
       updateInvoiceYears();
       renderInvoices();
-      statusEl.textContent = tenantPayload.records.length
-        ? "Data dan invoice hanya menampilkan milik akun Anda."
-        : "Belum ada data tenant yang terhubung ke akun ini.";
+      statusEl.textContent = user?.role === "admin"
+        ? `Menampilkan ${tenantRecords.length} kontrak dan ${invoiceRecords.length} invoice dari seluruh tenant.`
+        : tenantRecords.length
+          ? "Data dan invoice hanya menampilkan milik akun Anda."
+          : "Belum ada data tenant yang terhubung ke akun ini.";
       statusEl.className = "tenant-table-status";
     } catch (error) {
       if (
@@ -486,6 +572,7 @@ const ClientPortal = (() => {
       statusEl.textContent = `Gagal memuat portal client: ${error.message}`;
       statusEl.className = "tenant-table-status is-error";
     }
+
   }
 
   return Object.freeze({ refresh, closeInvoice });

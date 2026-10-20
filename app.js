@@ -147,7 +147,11 @@ function applyRole(user) {
   registerTenantBtn.hidden = !isAdmin;
   document.getElementById("clientAccountSwitcher").hidden = !isAdmin;
   showTenantTableBtn.hidden = isClient;
-  showClientDataBtn.hidden = !isClient;
+  showClientDataBtn.hidden = !isAdmin && !isClient;
+  showClientDataBtn.setAttribute("aria-label", isAdmin ? "Invoice Tenant" : "Data Saya dan Invoice");
+  showClientDataBtn.querySelector("span").textContent = isAdmin
+    ? "Invoice Tenant"
+    : "Data Saya & Invoice";
   editRoomBtn.hidden = !isAdmin;
   clearTenantBtn.hidden = true;
   userAvatarEl.textContent = user.displayName.slice(0, 1).toLocaleUpperCase("id-ID");
@@ -2766,7 +2770,7 @@ showTenantTableBtn.addEventListener("click", () => {
   void TenantTable.refresh();
 });
 showClientDataBtn.addEventListener("click", () => {
-  if (Auth.currentUser?.role !== "client") return;
+  if (!["admin", "client"].includes(Auth.currentUser?.role)) return;
   ClientPortal.closeInvoice();
   workspaceLayoutEl.hidden = true;
   mapLayoutEl.hidden = true;
@@ -2836,14 +2840,16 @@ window.addEventListener("pintar:authenticated", (event) => {
   TenantApi.init({
     onRecords: (records, diagnostics) => {
       applyDatabaseRecords(records, diagnostics);
-      if (user.role === "client" && !clientPortalViewEl.hidden) {
+      if (["admin", "client"].includes(user.role) && !clientPortalViewEl.hidden) {
         void ClientPortal.refresh();
       }
     },
     onStatus: setSyncStatus,
   });
   if (!tenantTableViewEl.hidden && user.role !== "client") void TenantTable.refresh();
-  if (!clientPortalViewEl.hidden && user.role === "client") void ClientPortal.refresh();
+  if (!clientPortalViewEl.hidden && ["admin", "client"].includes(user.role)) {
+    void ClientPortal.refresh();
+  }
 });
 
 window.addEventListener("pintar:logged-out", () => {

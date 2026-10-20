@@ -491,10 +491,13 @@
       <section class="tenant-table-card client-portal-card" aria-labelledby="clientPortalHeading">
         <div class="tenant-table-heading">
           <div>
-            <span class="panel-eyebrow">PORTAL CLIENT</span>
+            <span id="clientPortalEyebrow" class="panel-eyebrow">PORTAL CLIENT</span>
             <h2 id="clientPortalHeading">Data Saya &amp; Invoice</h2>
             <p id="clientPortalTenant"></p>
           </div>
+          <button id="downloadTenantInvoices" class="invoice-print-button" type="button" hidden>
+            Unduh hasil filter CSV
+          </button>
         </div>
         <p id="clientPortalStatus" class="tenant-table-status" role="status" aria-live="polite">
           Memuat data akun…
@@ -530,7 +533,7 @@
         <div class="tenant-table-scroll">
           <table class="tenant-data-table">
             <thead>
-              <tr><th>No. Invoice</th><th>Kategori</th><th>Periode</th><th>Jatuh Tempo</th><th>Jumlah</th><th>Status</th><th>Aksi</th></tr>
+              <tr><th>No. Invoice</th><th id="clientInvoiceTenantHeader" hidden>Tenant</th><th>Kategori</th><th>Periode</th><th>Jatuh Tempo</th><th>Jumlah</th><th>Status</th><th>Aksi</th></tr>
             </thead>
             <tbody id="clientInvoiceRows"></tbody>
           </table>
