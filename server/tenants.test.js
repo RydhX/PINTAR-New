@@ -29,48 +29,78 @@ function validContract(overrides = {}) {
 
 function validCustomTenantArea(overrides = {}) {
   return {
-    floor_id: "Lantai 11",
     geometry: {
       type: "Polygon",
       coordinates: [[[100, 100], [400, 100], [400, 300], [100, 100]]],
     },
-    area_sqm: "120.5",
-    tenant_name: "PT Rooftop",
     usage_type: "Antena",
-    status: "DISEWA",
-    rent_price: "1500000",
     ...overrides,
   };
 }
 
 test("validates and normalizes custom rooftop tenant areas", () => {
-  const area = normalizeCustomTenantArea(validCustomTenantArea());
+  const contract = normalizeContract(validContract());
+  const rooms = normalizeRooms({
+    building: "GKP",
+    floor: "L11",
+    occupancy_status: "occupied",
+    rooms: [{ room_id: "L11_CUSTOM_0123456789abcdef0123456789abcdef", area_m2: "120.5" }],
+  }, contract);
+  const area = normalizeCustomTenantArea(validCustomTenantArea(), {
+    building: "GKP",
+    floor: "L11",
+    contract,
+    rooms,
+  });
   assert.equal(area.buildingId, "GKP");
   assert.equal(area.floorId, "Lantai 11");
   assert.equal(area.areaSqm, 120.5);
-  assert.equal(area.rentPrice, 1500000);
-  assert.equal(area.tenantName, "PT Rooftop");
+  assert.equal(area.rentPrice, 1000000);
+  assert.equal(area.tenantName, "Tenant Uji");
+  assert.equal(area.status, "DISEWA");
+  assert.equal(area.usageType, "Antena");
+  assert.equal(area.roomId, "L11_CUSTOM_0123456789abcdef0123456789abcdef");
 
   assert.throws(
-    () => normalizeCustomTenantArea(validCustomTenantArea({ floor_id: "Lantai 10" })),
+    () => normalizeCustomTenantArea(validCustomTenantArea(), {
+      building: "GKP",
+      floor: "L10",
+      contract,
+      rooms,
+    }),
     /only be saved on Lantai 11/,
   );
   assert.throws(
     () => normalizeCustomTenantArea(validCustomTenantArea({
       geometry: {
         type: "Polygon",
-        coordinates: [[[100, 100], [7000, 100], [400, 300], [100, 100]]],
+        coordinates: [[[100, 100], [7000, 100], [400, 300], [100, 100]        ]],
       },
-    })),
+    }), { building: "GKP", floor: "L11", contract, rooms }),
     /within the Lantai 11 plan/,
   );
   assert.throws(
-    () => normalizeCustomTenantArea(validCustomTenantArea({ area_sqm: 0 })),
+    () => normalizeCustomTenantArea(validCustomTenantArea(), {
+      building: "GKP",
+      floor: "L11",
+      contract,
+      rooms: normalizeRooms({
+        building: "GKP",
+        floor: "L11",
+        occupancy_status: "occupied",
+        rooms: [{ room_id: "L11_CUSTOM_0123456789abcdef0123456789abcdef", area_m2: 0 }],
+      }, contract),
+    }),
     /area_sqm must be greater than 0/,
   );
   assert.throws(
-    () => normalizeCustomTenantArea(validCustomTenantArea({ status: "UNKNOWN" })),
-    /status must be/,
+    () => normalizeCustomTenantArea(validCustomTenantArea({ usage_type: "" }), {
+      building: "GKP",
+      floor: "L11",
+      contract,
+      rooms,
+    }),
+    /usage_type is required/,
   );
   assert.throws(
     () => normalizeCustomTenantArea(validCustomTenantArea({
@@ -78,8 +108,17 @@ test("validates and normalizes custom rooftop tenant areas", () => {
         type: "Polygon",
         coordinates: [[[100, 100], [400, 100], [400, 300], [100, 200]]],
       },
-    })),
+    }), { building: "GKP", floor: "L11", contract, rooms }),
     /ring must be closed/,
+  );
+  assert.throws(
+    () => normalizeCustomTenantArea(validCustomTenantArea(), {
+      building: "GKP",
+      floor: "L11",
+      contract,
+      rooms: [{ ...rooms[0], room_id: "L11_R01" }],
+    }),
+    /one custom Lantai 11 unit/,
   );
 });
 

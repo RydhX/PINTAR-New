@@ -8423,53 +8423,7 @@ body[data-map-mode="SITE_VIEW"] .map-back-button {
   vector-effect: non-scaling-stroke;
   cursor: help;
 }
-.custom-tenant-area-dialog {
-  width: min(460px, calc(100vw - 28px));
-  max-width: none;
-  max-height: min(90vh, 760px);
-  padding: 0;
-  border: 1px solid #dbe3eb;
-  border-radius: 16px;
-  box-shadow: 0 24px 70px rgba(15, 23, 42, .3);
-}
-.custom-tenant-area-dialog::backdrop { background: rgba(15, 23, 42, .55); }
-.custom-tenant-area-form {
-  display: grid;
-  gap: 14px;
-  padding: 22px;
-}
-.custom-tenant-area-form header h2 { margin: 5px 0; color: #102a43; font-size: 21px; }
-.custom-tenant-area-form header p { margin: 0; color: #64748b; font-size: 12px; line-height: 1.6; }
-.custom-tenant-area-form > label { display: grid; gap: 6px; color: #334155; font-size: 12px; font-weight: 600; }
-.custom-tenant-area-form input,
-.custom-tenant-area-form select {
-  width: 100%;
-  min-height: 40px;
-  padding: 8px 10px;
-  border: 1px solid #cbd5e1;
-  border-radius: 8px;
-  background: #fff;
-  color: #0f172a;
-  font: inherit;
-  font-weight: 400;
-}
-.custom-tenant-area-status { min-height: 18px; margin: 0; color: #b91c1c; font-size: 12px; }
-.custom-tenant-area-form footer { display: flex; justify-content: flex-end; gap: 9px; }
-.custom-tenant-area-form footer button {
-  min-height: 39px;
-  padding: 8px 14px;
-  border: 1px solid #cbd5e1;
-  border-radius: 8px;
-  background: #fff;
-  color: #334155;
-  font: inherit;
-  font-size: 12px;
-  font-weight: 600;
-}
-.custom-tenant-area-form footer button[type="submit"] { border-color: #0f766e; background: #0f766e; color: #fff; }
-.custom-tenant-area-form footer button:disabled { cursor: wait; opacity: .6; }
 @media (max-width: 600px) {
   .rooftop-draw-button { top: 14px; right: 14px; max-width: calc(100% - 28px); }
   .rooftop-area-status { top: 63px; right: 14px; }
-  .custom-tenant-area-form { padding: 18px; }
 }

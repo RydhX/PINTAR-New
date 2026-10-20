@@ -3,10 +3,6 @@ const CustomRooftop = (() => {
   const BUILDING_ID = "GKP";
   const button = document.getElementById("rooftopDrawButton");
   const status = document.getElementById("rooftopAreaStatus");
-  const dialog = document.getElementById("customTenantAreaDialog");
-  const form = document.getElementById("customTenantAreaForm");
-  const formStatus = document.getElementById("customTenantAreaStatus");
-  const cancelButton = document.getElementById("cancelCustomTenantArea");
   const money = new Intl.NumberFormat("id-ID", {
     style: "currency",
     currency: "IDR",
@@ -16,10 +12,9 @@ const CustomRooftop = (() => {
   let active = false;
   let planSvg = null;
   let features = [];
+  let onSelectArea = null;
   let drawMap = null;
   let drawSurface = null;
-  let draftGeometry = null;
-  let isSaving = false;
 
   function eligible() {
     return active &&
@@ -57,7 +52,7 @@ const CustomRooftop = (() => {
       if (!Array.isArray(ring) || ring.length < 4) return;
       const polygon = document.createElementNS("http://www.w3.org/2000/svg", "polygon");
       polygon.classList.add("custom-tenant-area-polygon");
-      polygon.classList.add(`is-${String(feature.status).toLowerCase()}`);
+      polygon.classList.add(`is-${String(feature.status || "").toLowerCase()}`);
       polygon.setAttribute(
         "points",
         ring.map(([x, y]) => `${Number(x)} ${Number(y)}`).join(" "),
@@ -71,6 +66,10 @@ const CustomRooftop = (() => {
         `${feature.tenant_name} · ${feature.usage_type} · ${feature.area_sqm} m² · ` +
         `${feature.status} · ${money.format(Number(feature.rent_price))}`;
       polygon.appendChild(title);
+      polygon.addEventListener("click", (event) => {
+        event.stopPropagation();
+        onSelectArea?.(feature.room_id);
+      });
       layer.appendChild(polygon);
     });
 
@@ -96,14 +95,6 @@ const CustomRooftop = (() => {
     MapView.setInteractionLocked(false);
     button.setAttribute("aria-pressed", "false");
     button.textContent = "Tambah Area Tenant (Gambar Poligon)";
-  }
-
-  function openAreaForm(geometry) {
-    draftGeometry = geometry;
-    form.reset();
-    formStatus.textContent = "";
-    if (!dialog.open) dialog.showModal();
-    form.elements.namedItem("tenant_name").focus();
   }
 
   function startDrawing() {
@@ -145,7 +136,10 @@ const CustomRooftop = (() => {
       try {
         const geometry = normalizeLocalGeometry(event.layer.toGeoJSON().geometry);
         stopDrawing();
-        openAreaForm(geometry);
+        setStatus("Poligon selesai. Lengkapi formulir pendaftaran tenant rooftop.");
+        window.dispatchEvent(new CustomEvent("pintar:rooftop-area-drawn", {
+          detail: { geometry },
+        }));
       } catch (error) {
         stopDrawing();
         setStatus(`Poligon tidak dapat digunakan: ${error.message}`, "error");
@@ -165,107 +159,22 @@ const CustomRooftop = (() => {
     setStatus("Klik titik-titik pada denah, lalu klik titik awal untuk menutup poligon.");
   }
 
-  async function loadAreas() {
-    const response = await fetch(
-      `/api/tenants/custom-polygon?floor_id=${encodeURIComponent(FLOOR_ID)}`,
-      { headers: Auth.headers(), cache: "no-store" },
-    );
-    let payload;
-    try {
-      payload = await response.json();
-    } catch {
-      throw new Error(`Server memberikan respons tidak valid (HTTP ${response.status}).`);
-    }
-    if (!response.ok) throw new Error(payload.error || `Gagal memuat area (HTTP ${response.status}).`);
-    return payload.records;
-  }
-
   button.addEventListener("click", startDrawing);
-  cancelButton.addEventListener("click", () => {
-    draftGeometry = null;
-    dialog.close();
-  });
-  dialog.addEventListener("cancel", (event) => {
-    event.preventDefault();
-    if (!isSaving) {
-      draftGeometry = null;
-      dialog.close();
-    }
-  });
-  dialog.addEventListener("close", () => {
-    draftGeometry = null;
-    form.reset();
-  });
-  form.addEventListener("submit", async (event) => {
-    event.preventDefault();
-    if (!eligible() || !draftGeometry || isSaving) return;
-    const submitButton = form.querySelector('[type="submit"]');
-    const values = new FormData(form);
-    const payload = {
-      floor_id: FLOOR_ID,
-      geometry: draftGeometry,
-      tenant_name: String(values.get("tenant_name") || ""),
-      usage_type: String(values.get("usage_type") || ""),
-      status: String(values.get("status") || ""),
-      area_sqm: Number(values.get("area_sqm")),
-      rent_price: Number(values.get("rent_price")),
-    };
-    isSaving = true;
-    submitButton.disabled = true;
-    formStatus.textContent = "";
-    try {
-      const response = await fetch("/api/tenants/custom-polygon", {
-        method: "POST",
-        headers: {
-          ...Auth.headers(),
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(payload),
-        cache: "no-store",
-      });
-      let result;
-      try {
-        result = await response.json();
-      } catch {
-        throw new Error(`Server memberikan respons tidak valid (HTTP ${response.status}).`);
-      }
-      if (!response.ok) throw new Error(result.error || `Gagal menyimpan area (HTTP ${response.status}).`);
-      if (!eligible()) {
-        dialog.close();
-        return;
-      }
-      features.push(result.feature);
-      addFeaturesToSvg();
-      dialog.close();
-      setStatus(`Area ${result.feature.tenant_name} berhasil disimpan (${result.feature.area_sqm} m²).`, "success");
-    } catch (error) {
-      formStatus.textContent = `Gagal menyimpan area: ${error.message}`;
-    } finally {
-      isSaving = false;
-      submitButton.disabled = false;
-    }
-  });
 
-  async function attach({ buildingId, floorId, floorName, svg }) {
+  async function attach({ buildingId, floorId, floorName, svg, areas = [], onSelect }) {
     stopDrawing({ preserveView: false });
     active = buildingId === BUILDING_ID &&
       floorId === "L11" &&
       floorName === FLOOR_ID;
     planSvg = active ? svg : null;
-    features = [];
+    features = active ? areas : [];
+    onSelectArea = active ? onSelect : null;
     button.hidden = !active || Auth.currentUser?.role !== "admin";
     button.setAttribute("aria-pressed", "false");
     button.textContent = "Tambah Area Tenant (Gambar Poligon)";
     setStatus("");
     if (!active) return;
-    try {
-      features = await loadAreas();
-      if (!active || !planSvg?.isConnected) return;
-      addFeaturesToSvg();
-    } catch (error) {
-      console.error("Gagal memuat poligon tenant rooftop:", error);
-      setStatus(`Gagal memuat area rooftop: ${error.message}`, "error");
-    }
+    addFeaturesToSvg();
   }
 
   function detach() {
@@ -274,10 +183,16 @@ const CustomRooftop = (() => {
     planSvg?.querySelector("#customTenantAreasLayer")?.remove();
     planSvg = null;
     features = [];
+    onSelectArea = null;
     button.hidden = true;
-    if (dialog.open && !isSaving) dialog.close();
     setStatus("");
   }
 
-  return Object.freeze({ attach, detach });
+  function updateAreas(areas) {
+    if (!active) return;
+    features = areas;
+    addFeaturesToSvg();
+  }
+
+  return Object.freeze({ attach, detach, updateAreas });
 })();

@@ -215,6 +215,8 @@ CREATE TABLE IF NOT EXISTS custom_tenant_areas (
   id UUID PRIMARY KEY,
   building_id TEXT NOT NULL DEFAULT 'GKP' CHECK (building_id = 'GKP'),
   floor_id TEXT NOT NULL CHECK (floor_id = 'Lantai 11'),
+  room_id TEXT,
+  contract_id UUID REFERENCES tenant_contracts(id) ON DELETE CASCADE,
   geometry JSONB NOT NULL CHECK (geometry->>'type' = 'Polygon'),
   coordinate_system TEXT NOT NULL DEFAULT 'GKP_L11_SVG_VIEWBOX_6000x3500',
   area_sqm NUMERIC(14, 2) NOT NULL CHECK (area_sqm > 0),
@@ -224,6 +226,15 @@ CREATE TABLE IF NOT EXISTS custom_tenant_areas (
   rent_price NUMERIC(16, 2) NOT NULL CHECK (rent_price >= 0),
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+ALTER TABLE custom_tenant_areas
+  ADD COLUMN IF NOT EXISTS room_id TEXT,
+  ADD COLUMN IF NOT EXISTS contract_id UUID
+    REFERENCES tenant_contracts(id) ON DELETE CASCADE;
+
+CREATE UNIQUE INDEX IF NOT EXISTS custom_tenant_areas_room_idx
+  ON custom_tenant_areas (building_id, floor_id, room_id)
+  WHERE room_id IS NOT NULL;
 
 CREATE INDEX IF NOT EXISTS tenant_contracts_payment_status_idx
   ON tenant_contracts (payment_status);

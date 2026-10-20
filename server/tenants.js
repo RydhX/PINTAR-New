@@ -86,12 +86,19 @@ function readNumber(value, field, integer = false) {
   return numeric;
 }
 
-export function normalizeCustomTenantArea(body) {
+export function normalizeCustomTenantArea(body, { building, floor, contract, rooms } = {}) {
   if (!body || typeof body !== "object" || Array.isArray(body)) {
     throw validationError("Custom area payload must be an object.");
   }
-  if (body.floor_id !== "Lantai 11") {
+  if (building !== "GKP" || floor !== "L11") {
     throw validationError("Custom tenant areas can only be saved on Lantai 11.");
+  }
+  if (
+    !Array.isArray(rooms) ||
+    rooms.length !== 1 ||
+    !/^L11_CUSTOM_[0-9a-f]{32}$/i.test(rooms[0].room_id)
+  ) {
+    throw validationError("A rooftop polygon must be registered as one custom Lantai 11 unit.");
   }
 
   const geometry = body.geometry;
@@ -121,26 +128,26 @@ export function normalizeCustomTenantArea(body) {
     throw validationError("Polygon ring must be closed.");
   }
 
-  const tenantName = readText(body.tenant_name, "tenant_name", 200);
   const usageType = readText(body.usage_type, "usage_type", 80);
-  const status = body.status;
-  const areaSqm = readNumber(body.area_sqm, "area_sqm");
-  const rentPrice = readNumber(body.rent_price, "rent_price");
-  if (!tenantName) throw validationError("tenant_name is required.");
+  const areaSqm = rooms[0].area_m2;
+  const tenantName = contract?.tenant;
+  const rentPrice = contract?.contract_value;
+  const status = contract?.occupancy_status === "in_progress"
+    ? "NEGOSIASI"
+    : "DISEWA";
   if (!usageType) throw validationError("usage_type is required.");
-  if (!["DISEWA", "TERSEDIA", "NEGOSIASI"].includes(status)) {
-    throw validationError("status must be DISEWA, TERSEDIA, or NEGOSIASI.");
-  }
-  if (areaSqm === null || areaSqm <= 0 || areaSqm > 10_000_000) {
+  if (!tenantName) throw validationError("tenant_name is required.");
+  if (!Number.isFinite(areaSqm) || areaSqm <= 0 || areaSqm > 10_000_000) {
     throw validationError("area_sqm must be greater than 0 and no more than 10000000.");
   }
-  if (rentPrice === null || rentPrice > 1_000_000_000_000) {
+  if (!Number.isFinite(rentPrice) || rentPrice <= 0 || rentPrice > 1_000_000_000_000) {
     throw validationError("rent_price is required and must not exceed 1000000000000.");
   }
 
   return {
     buildingId: "GKP",
     floorId: "Lantai 11",
+    roomId: rooms[0].room_id,
     geometry,
     areaSqm,
     tenantName,
@@ -557,6 +564,8 @@ function mapRoomRecord(row) {
     notes: row.notes ?? "",
     utility_payments: row.utility_payments ?? [],
     invoices: row.invoices ?? [],
+    custom_area_geometry: row.custom_area_geometry ?? null,
+    custom_area_usage_type: row.custom_area_usage_type ?? null,
   };
 }
 
@@ -568,6 +577,12 @@ export function roomRecordForUser(record, user) {
     room_id: record.room_id,
     occupancy_status: record.occupancy_status,
     area_m2: record.area_m2,
+    ...(record.custom_area_geometry
+      ? {
+        custom_area_geometry: record.custom_area_geometry,
+        custom_area_usage_type: record.custom_area_usage_type,
+      }
+      : {}),
   };
 }
 
@@ -576,6 +591,8 @@ tenantsRouter.get("/rooms", async (req, res, next) => {
     const { rows } = await pool.query(`
       SELECT c.tenant_id, r.building, r.floor, r.room_id, r.contract_id,
         r.occupancy_status, r.area_m2, c.tenant, c.payment_status,
+        custom_area.geometry AS custom_area_geometry,
+        custom_area.usage_type AS custom_area_usage_type,
         c.start_date::text, c.end_date::text, c.contract_value,
         c.rental_invoice_scheme, c.separate_utility_invoices,
         c.billing_period, c.installment_interval_months,
@@ -588,6 +605,11 @@ tenantsRouter.get("/rooms", async (req, res, next) => {
         COALESCE(invoices.records, '[]'::json) AS invoices
       FROM contract_rooms r
       JOIN tenant_contracts c ON c.id = r.contract_id
+      LEFT JOIN custom_tenant_areas custom_area
+        ON custom_area.contract_id = c.id
+        AND custom_area.room_id = r.room_id
+        AND custom_area.building_id = r.building
+        AND custom_area.floor_id = 'Lantai 11'
       LEFT JOIN LATERAL (
         SELECT json_agg(json_build_object(
           'id', payment.id,
@@ -643,53 +665,6 @@ tenantsRouter.get("/rooms", async (req, res, next) => {
     next(error);
   }
 });
-
-tenantsRouter.get("/tenants/custom-polygon", async (_req, res, next) => {
-  try {
-    const { rows } = await pool.query(
-      `SELECT id, building_id, floor_id, geometry, area_sqm, tenant_name,
-        usage_type, status, rent_price, created_at
-       FROM custom_tenant_areas
-       WHERE building_id = 'GKP' AND floor_id = 'Lantai 11'
-       ORDER BY created_at, id`,
-    );
-    res.json({ records: rows });
-  } catch (error) {
-    next(error);
-  }
-});
-
-tenantsRouter.post(
-  "/tenants/custom-polygon",
-  allowRoles("admin"),
-  async (req, res, next) => {
-    try {
-      const feature = normalizeCustomTenantArea(req.body);
-      const { rows } = await pool.query(
-        `INSERT INTO custom_tenant_areas (
-          id, building_id, floor_id, geometry, area_sqm, tenant_name,
-          usage_type, status, rent_price
-        ) VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7, $8, $9)
-        RETURNING id, building_id, floor_id, geometry, area_sqm,
-          tenant_name, usage_type, status, rent_price, created_at`,
-        [
-          randomUUID(),
-          feature.buildingId,
-          feature.floorId,
-          JSON.stringify(feature.geometry),
-          feature.areaSqm,
-          feature.tenantName,
-          feature.usageType,
-          feature.status,
-          feature.rentPrice,
-        ],
-      );
-      res.status(201).json({ feature: rows[0] });
-    } catch (error) {
-      next(error);
-    }
-  },
-);
 
 tenantsRouter.patch("/utility-payments/:id", allowRoles("admin"), async (req, res, next) => {
   try {
@@ -965,6 +940,20 @@ tenantsRouter.post("/contracts", allowRoles("admin"), async (req, res, next) => 
   try {
     const contract = normalizeContract(req.body);
     const rooms = normalizeRooms(req.body, contract);
+    const customArea = req.body?.custom_area
+      ? normalizeCustomTenantArea(req.body.custom_area, {
+        building: req.body.building,
+        floor: req.body.floor,
+        contract,
+        rooms,
+      })
+      : null;
+    const hasCustomRooftopRoom = rooms.some((room) =>
+      /^L11_CUSTOM_/i.test(room.room_id),
+    );
+    if (hasCustomRooftopRoom && !customArea && !req.body.contract_id) {
+      throw validationError("Custom rooftop units must be registered with their drawn polygon.");
+    }
     const contractId = req.body.contract_id || randomUUID();
     if (
       typeof contractId !== "string" ||
@@ -1094,6 +1083,55 @@ tenantsRouter.post("/contracts", allowRoles("admin"), async (req, res, next) => 
       );
     }
 
+    await client.query(
+      `DELETE FROM custom_tenant_areas
+       WHERE contract_id = $1::uuid
+         AND room_id <> ALL($2::text[])`,
+      [contractId, roomIds],
+    );
+    if (customArea) {
+      await client.query(
+        `INSERT INTO custom_tenant_areas (
+          id, building_id, floor_id, room_id, contract_id, geometry, area_sqm,
+          tenant_name, usage_type, status, rent_price
+        ) VALUES ($1::uuid, $2, $3, $4, $5::uuid, $6::jsonb, $7, $8, $9, $10, $11)`,
+        [
+          randomUUID(),
+          customArea.buildingId,
+          customArea.floorId,
+          customArea.roomId,
+          contractId,
+          JSON.stringify(customArea.geometry),
+          customArea.areaSqm,
+          customArea.tenantName,
+          customArea.usageType,
+          customArea.status,
+          customArea.rentPrice,
+        ],
+      );
+    } else if (hasCustomRooftopRoom) {
+      const customRoom = rooms.find((room) => /^L11_CUSTOM_/i.test(room.room_id));
+      const result = await client.query(
+        `UPDATE custom_tenant_areas
+         SET area_sqm = $3,
+             tenant_name = $4,
+             status = $5,
+             rent_price = $6
+         WHERE contract_id = $1::uuid AND room_id = $2`,
+        [
+          contractId,
+          customRoom.room_id,
+          customRoom.area_m2,
+          contract.tenant,
+          contract.occupancy_status === "in_progress" ? "NEGOSIASI" : "DISEWA",
+          contract.contract_value,
+        ],
+      );
+      if (!result.rowCount) {
+        throw validationError("Custom rooftop area is no longer linked to this tenant contract.");
+      }
+    }
+
     await client.query("COMMIT");
     res.status(200).json({
       success: true,
@@ -1130,6 +1168,11 @@ tenantsRouter.delete("/rooms", allowRoles("admin"), async (req, res, next) => {
     if (!result.rowCount) {
       throw Object.assign(new Error("Room record was not found."), { status: 404 });
     }
+    await client.query(
+      `DELETE FROM custom_tenant_areas
+       WHERE contract_id = $1::uuid AND room_id = $2`,
+      [result.rows[0].contract_id, roomId],
+    );
     await client.query(
       `DELETE FROM tenant_contracts c
        WHERE c.id = $1::uuid

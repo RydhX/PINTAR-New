@@ -267,44 +267,6 @@
           Tambah Area Tenant (Gambar Poligon)
         </button>
         <p id="rooftopAreaStatus" class="rooftop-area-status" role="status" aria-live="polite" hidden></p>
-        <dialog id="customTenantAreaDialog" class="custom-tenant-area-dialog" aria-labelledby="customTenantAreaTitle">
-          <form id="customTenantAreaForm" class="custom-tenant-area-form">
-            <header>
-              <div class="eyebrow">DIGITASI ROOFTOP · LANTAI 11</div>
-              <h2 id="customTenantAreaTitle">Data Area Tenant</h2>
-              <p>Masukkan luas hasil pengukuran nyata. Poligon pada denah hanya panduan visual.</p>
-            </header>
-            <label>Nama tenant
-              <input name="tenant_name" type="text" maxlength="200" required />
-            </label>
-            <label>Jenis penggunaan
-              <select name="usage_type" required>
-                <option value="Tower">Tower</option>
-                <option value="Antena">Antena</option>
-                <option value="Booth">Booth</option>
-                <option value="Lainnya">Lainnya</option>
-              </select>
-            </label>
-            <label>Status sewa
-              <select name="status" required>
-                <option value="DISEWA">Disewa</option>
-                <option value="TERSEDIA">Tersedia</option>
-                <option value="NEGOSIASI">Dalam negosiasi</option>
-              </select>
-            </label>
-            <label>Luas hasil pengukuran (m²)
-              <input name="area_sqm" type="number" min="0.01" max="10000000" step="0.01" required />
-            </label>
-            <label>Harga sewa (Rp)
-              <input name="rent_price" type="number" min="0" max="1000000000000" step="1" required />
-            </label>
-            <p id="customTenantAreaStatus" class="custom-tenant-area-status" role="status" aria-live="polite"></p>
-            <footer>
-              <button id="cancelCustomTenantArea" type="button">Batal</button>
-              <button type="submit">Simpan area</button>
-            </footer>
-          </form>
-        </dialog>
         <aside
           id="floorPicker"
           class="floor-picker"
@@ -403,6 +365,14 @@
                 <p>Pilih satu atau beberapa ruangan pada lantai ini. Luas dicatat per ruangan.</p>
                 <div id="contractRoomList" class="contract-room-list"></div>
               </section>
+              <label id="customAreaUsageField" hidden>Jenis penggunaan area rooftop
+                <select name="custom_area_usage_type">
+                  <option value="Tower">Tower</option>
+                  <option value="Antena">Antena</option>
+                  <option value="Booth">Booth</option>
+                  <option value="Lainnya" selected>Lainnya</option>
+                </select>
+              </label>
               <label>PIC<input name="pic" type="text" maxlength="200" /></label>
               <label>Kontak Client<input name="contact" type="text" maxlength="200" /></label>
             </section>

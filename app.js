@@ -66,6 +66,7 @@ const rentalSchemeInput = roomEditor.elements.namedItem("rental_invoice_scheme")
 const installmentIntervalInput = roomEditor.elements.namedItem("installment_interval_months");
 const startDateInput = roomEditor.elements.namedItem("start_date");
 const endDateInput = roomEditor.elements.namedItem("end_date");
+const customAreaUsageField = document.getElementById("customAreaUsageField");
 const actionConfirmDialog = document.getElementById("actionConfirm");
 const actionConfirmTitle = document.getElementById("actionConfirmTitle");
 const actionConfirmMessage = document.getElementById("actionConfirmMessage");
@@ -574,6 +575,29 @@ function applyDatabaseRecords(records, endpointDiagnostics = [], { force = false
   }
 
   const diagnostics = [...endpointDiagnostics];
+  const rooftopFloor = DATA.buildings
+    .find((building) => building.id === "GKP")
+    ?.floors.find((floor) => floor.id === "L11");
+  if (rooftopFloor) {
+    const customRoomRecords = records.filter((record) =>
+      record.building === "GKP" &&
+      normalizeFloorId(record.floor) === "11" &&
+      record.custom_area_geometry,
+    );
+    const persistedCustomRoomIds = new Set(customRoomRecords.map((record) => record.room_id));
+    Object.entries(rooftopFloor.rooms).forEach(([roomId, room]) => {
+      if (room.customArea && !room.customAreaDraft && !persistedCustomRoomIds.has(roomId)) {
+        delete rooftopFloor.rooms[roomId];
+      }
+    });
+    customRoomRecords.forEach((record) => {
+      rooftopFloor.rooms[record.room_id] ??= {
+        status: "vacant",
+        svgId: null,
+        customArea: true,
+      };
+    });
+  }
 
   const roomsWithUnknownStatus = new Map();
   records.forEach((record) => {
@@ -687,6 +711,12 @@ function applyDatabaseRecords(records, endpointDiagnostics = [], { force = false
             : value;
     });
     room.invoices = record.invoices || [];
+    if (record.custom_area_geometry) {
+      room.customArea = true;
+      room.customAreaGeometry = record.custom_area_geometry;
+      room.customAreaUsageType = record.custom_area_usage_type || "Lainnya";
+      room.customAreaDraft = false;
+    }
   });
 
   const diagnosticSignature = JSON.stringify(diagnostics);
@@ -717,6 +747,21 @@ function applyDatabaseRecords(records, endpointDiagnostics = [], { force = false
     buildSummary(floor.rooms);
     buildUnitList(floor.rooms);
     applyFilter();
+    if (state.buildingId === "GKP" && state.floorId === "L11") {
+      CustomRooftop.updateAreas(
+        Object.entries(floor.rooms)
+          .filter(([, room]) => room.customAreaGeometry)
+          .map(([roomId, room]) => ({
+            room_id: roomId,
+            geometry: room.customAreaGeometry,
+            tenant_name: room.tenant,
+            usage_type: room.customAreaUsageType || "Lainnya",
+            area_sqm: room.area,
+            status: room.status === "in_progress" ? "NEGOSIASI" : "DISEWA",
+            rent_price: room.contractValue,
+          })),
+      );
+    }
 
     if (
       selectedRoomId &&
@@ -1005,7 +1050,7 @@ function buildRegistry(rooms = {}) {
 
 function checkSvgAgainstData(rooms = {}) {
   const missing = Object.entries(rooms)
-    .filter(([roomId, room]) => !findById(getSvgId(room, roomId)))
+    .filter(([roomId, room]) => !room.customArea && !findById(getSvgId(room, roomId)))
     .map(([roomId]) => roomId);
   if (missing.length) {
     console.warn("Ruang tidak ada di SVG:", missing);
@@ -1154,6 +1199,7 @@ async function showFloorPlan(token) {
   ) return;
 
   Object.entries(f.rooms).forEach(([roomId, room]) => {
+    if (room.customArea) return;
     const svgId = getSvgId(room, roomId);
     const el = findById(svgId);
     if (!el) {
@@ -1197,6 +1243,18 @@ async function showFloorPlan(token) {
     floorId,
     floorName: f.name,
     svg,
+    areas: Object.entries(f.rooms)
+      .filter(([, room]) => room.customAreaGeometry)
+      .map(([roomId, room]) => ({
+        room_id: roomId,
+        geometry: room.customAreaGeometry,
+        tenant_name: room.tenant,
+        usage_type: room.customAreaUsageType || "Lainnya",
+        area_sqm: room.area,
+        status: room.status === "in_progress" ? "NEGOSIASI" : "DISEWA",
+        rent_price: room.contractValue,
+      })),
+    onSelect: (roomId) => selectRoom(roomId, { allowVacant: true }),
   });
 }
 
@@ -2152,8 +2210,16 @@ function updateRegistrationTarget() {
     buildingId: building.id,
     floorId: floor.id,
     roomId,
+    customAreaDraft: room.customAreaDraft || null,
   };
-  populateRoomEditor(roomId, room, { isNew: true, rooms: floor.rooms });
+  customAreaUsageField.hidden = !registrationContext.customAreaDraft;
+  populateRoomEditor(roomId, room, {
+    isNew: true,
+    rooms: registrationContext.customAreaDraft ? { [roomId]: room } : floor.rooms,
+  });
+  if (registrationContext.customAreaDraft) {
+    roomEditor.elements.namedItem("custom_area_usage_type").value = "Lainnya";
+  }
   roomEditor.hidden = false;
   roomEditor.querySelector('[type="submit"]').textContent = "Daftarkan tenant";
 }
@@ -2202,6 +2268,10 @@ function beginNewTenantRegistration(location = null) {
       showToast("Unit ini tidak dapat dipilih untuk pendaftaran tenant.");
       return;
     }
+    const isCustomArea = Boolean(targetRoom.customAreaDraft);
+    registrationBuildingEl.disabled = isCustomArea;
+    registrationFloorEl.disabled = isCustomArea;
+    registrationRoomEl.disabled = isCustomArea;
   }
 
   newTenantFormHost.appendChild(roomEditor);
@@ -2214,6 +2284,31 @@ function beginNewTenantRegistration(location = null) {
 }
 
 registerTenantBtn.addEventListener("click", () => beginNewTenantRegistration());
+window.addEventListener("pintar:rooftop-area-drawn", (event) => {
+  if (
+    state.view !== "plan" ||
+    state.buildingId !== "GKP" ||
+    state.floorId !== "L11" ||
+    !event.detail?.geometry
+  ) {
+    return;
+  }
+  const roomId = `L11_CUSTOM_${crypto.randomUUID().replaceAll("-", "")}`;
+  const floor = DATA.buildings
+    .find((building) => building.id === "GKP")
+    .floors.find((item) => item.id === "L11");
+  floor.rooms[roomId] = {
+    status: "vacant",
+    svgId: null,
+    customArea: true,
+    customAreaDraft: { geometry: event.detail.geometry },
+  };
+  beginNewTenantRegistration({
+    buildingId: "GKP",
+    floorId: "L11",
+    roomId,
+  });
+});
 registerSelectedRoomBtn.addEventListener("click", () => {
   if (!selectedRoomId || state.view !== "plan") return;
   beginNewTenantRegistration({
@@ -2227,10 +2322,22 @@ registrationFloorEl.addEventListener("change", updateRegistrationRooms);
 registrationRoomEl.addEventListener("change", updateRegistrationTarget);
 closeNewTenantDialogBtn.addEventListener("click", () => newTenantDialog.close());
 newTenantDialog.addEventListener("close", () => {
+  if (registrationContext?.customAreaDraft) {
+    const draftFloor = DATA.buildings
+      .find((building) => building.id === registrationContext.buildingId)
+      ?.floors.find((floor) => floor.id === registrationContext.floorId);
+    if (!draftFloor?.rooms[registrationContext.roomId]?.contractId) {
+      delete draftFloor?.rooms[registrationContext.roomId];
+    }
+  }
   roomEditor.hidden = true;
   roomEditor.elements.namedItem("occupancy_status").closest("label").hidden = false;
   roomEditor.querySelector('[type="submit"]').textContent = "Simpan ke database";
   roomEditorFormHost.appendChild(roomEditor);
+  registrationBuildingEl.disabled = false;
+  registrationFloorEl.disabled = true;
+  registrationRoomEl.disabled = true;
+  customAreaUsageField.hidden = true;
   registrationContext = null;
   editorRoomId = null;
   editorStatusEl.textContent = "";
@@ -2539,6 +2646,17 @@ roomEditor.addEventListener("submit", async (event) => {
     editorStatusEl.textContent = "Pilih minimal satu ruangan untuk kontrak.";
     return;
   }
+  if (
+    registrationContext?.customAreaDraft &&
+    (linkedRooms.length !== 1 ||
+      linkedRooms[0].room_id !== activeRoomId ||
+      !Number.isFinite(linkedRooms[0].area_m2) ||
+      linkedRooms[0].area_m2 <= 0)
+  ) {
+    editorStatusEl.textContent = "Isi luas hasil pengukuran rooftop lebih dari 0 m².";
+    setActiveTab(document.getElementById("editorGeneralTab"));
+    return;
+  }
 
   const confirmed = await confirmAction({
     title: isNewRegistration ? "Daftarkan tenant baru?" : "Simpan data kontrak?",
@@ -2586,6 +2704,12 @@ roomEditor.addEventListener("submit", async (event) => {
   record.separate_utility_invoices = true;
   if (isNewRegistration) record.occupancy_status = "occupied";
   record.installment_payments = JSON.stringify([]);
+  const customArea = registrationContext?.customAreaDraft
+    ? {
+      geometry: registrationContext.customAreaDraft.geometry,
+      usage_type: roomEditor.elements.namedItem("custom_area_usage_type").value,
+    }
+    : null;
 
   const saveButton = roomEditor.querySelector('[type="submit"]');
   saveButton.disabled = true;
@@ -2593,7 +2717,7 @@ roomEditor.addEventListener("submit", async (event) => {
   let clientAccount = null;
   try {
     if (isNewRegistration) {
-      const result = await TenantApi.createContract(record, linkedRooms);
+      const result = await TenantApi.createContract(record, linkedRooms, customArea);
       clientAccount = result.client_account;
       const createdAt = { ...registrationContext };
       newTenantDialog.close();

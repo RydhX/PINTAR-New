@@ -86,13 +86,20 @@ di production.
 ### Area tenant khusus rooftop
 
 Admin dapat menggambar overlay area tenant hanya pada denah GKP **Lantai 11**.
-Karena denah SVG tidak memiliki skala fisik, masukkan luas dalam m² berdasarkan
-hasil pengukuran nyata; bentuk poligon hanya menjadi panduan visual. Sebelum
-menggunakan fitur pada database yang sudah berjalan, jalankan
-[supabase/custom-tenant-areas.sql](./supabase/custom-tenant-areas.sql) di Supabase
-SQL Editor. Untuk database baru, definisi tabel dan kebijakan RLS sudah termasuk
-di [supabase/schema.sql](./supabase/schema.sql). Endpoint backend menyimpan
-koordinat SVG bersama metadata dan hanya menerima penyimpanan dari admin.
+Setelah menggambar, aplikasi membuka formulir pendaftaran tenant dan kontrak
+yang sama seperti lantai lainnya. Nama tenant, kontrak, invoice, akun client,
+dan data ruang disimpan melalui alur `/api/contracts`; geometri SVG dan jenis
+penggunaan tersimpan sebagai metadata area yang ditautkan ke kontrak dan ruang.
+Karena denah SVG tidak memiliki skala fisik, luas dalam m² dimasukkan
+berdasarkan hasil pengukuran nyata; bentuk poligon hanya panduan visual.
+
+Untuk database baru, definisi tabel dan kebijakan RLS sudah termasuk di
+[supabase/schema.sql](./supabase/schema.sql). Pada database existing, jika tabel
+rooftop belum dibuat, jalankan
+[supabase/custom-tenant-areas.sql](./supabase/custom-tenant-areas.sql) terlebih
+dahulu. Lalu jalankan
+[supabase/custom-tenant-areas-contract-link.sql](./supabase/custom-tenant-areas-contract-link.sql)
+untuk menautkan setiap poligon dengan pendaftaran tenant dan kontrak.
 
 ## API
 

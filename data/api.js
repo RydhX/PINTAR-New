@@ -89,14 +89,15 @@ const TenantApi = (() => {
     statusHandler = null;
   }
 
-  function saveContract(record, rooms) {
-    return commit("/api/contracts", "POST", { ...record, rooms });
+  function saveContract(record, rooms, customArea = null) {
+    return commit("/api/contracts", "POST", { ...record, rooms, custom_area: customArea });
   }
 
-  function createContract(record, rooms) {
+  function createContract(record, rooms, customArea = null) {
     return saveContract(
       { ...record, contract_id: undefined, occupancy_status: "occupied" },
       rooms,
+      customArea,
     );
   }
 
