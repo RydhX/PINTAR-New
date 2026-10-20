@@ -25,6 +25,7 @@ const MapView = (() => {
   let viewBoxFrame = 0;
   const touchPointers = new Map();
   let suppressClick = false;
+  let interactionLocked = false;
 
   const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 
@@ -265,6 +266,7 @@ const MapView = (() => {
     pinch = null;
     touchPointers.clear();
     host?.classList.remove("dragging");
+    interactionLocked = false;
   }
 
   function finishDrag() {
@@ -286,6 +288,27 @@ const MapView = (() => {
     if (svg) setVB(home.x, home.y, home.w, home.h);
   }
 
+  function getViewBox() {
+    return vb ? { ...vb } : null;
+  }
+
+  function setViewBox(viewBox) {
+    if (!svg || !viewBox) return;
+    setVB(viewBox.x, viewBox.y, viewBox.w, viewBox.h);
+    flushViewBox();
+  }
+
+  function setInteractionLocked(locked) {
+    interactionLocked = Boolean(locked);
+    if (interactionLocked) {
+      finishDrag();
+      drag = null;
+      pinch = null;
+      touchPointers.clear();
+      host?.classList.remove("dragging");
+    }
+  }
+
   function zoomAt(factor, cx, cy) {
     if (!svg || !svgRect?.width || !svgRect?.height) return;
     const p = screenToViewBox(
@@ -299,12 +322,14 @@ const MapView = (() => {
 
   /* ---------- Event ---------- */
   function onWheel(e) {
+    if (interactionLocked) return;
     if (!svg || !svg.isConnected) return;
     e.preventDefault();
     zoomAt(Math.exp(e.deltaY * 0.0015), e.clientX, e.clientY);
   }
 
   function onDown(e) {
+    if (interactionLocked) return;
     if (!svg || !svg.contains(e.target)) return;
     if (e.pointerType === "touch") {
       touchPointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
@@ -423,5 +448,14 @@ const MapView = (() => {
     }
   }
 
-  return { init, attach, detach, reset, zoomAt };
+  return {
+    init,
+    attach,
+    detach,
+    reset,
+    zoomAt,
+    getViewBox,
+    setViewBox,
+    setInteractionLocked,
+  };
 })();

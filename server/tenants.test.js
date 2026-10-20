@@ -2,7 +2,12 @@ import assert from "node:assert/strict";
 import { after, test } from "node:test";
 
 process.env.DATABASE_URL ??= "postgresql://pintar:pintar_dev@localhost:5432/pintar";
-const [{ normalizeContract, normalizeRooms, roomRecordForUser }, { pool }] = await Promise.all([
+const [{
+  normalizeContract,
+  normalizeRooms,
+  normalizeCustomTenantArea,
+  roomRecordForUser,
+}, { pool }] = await Promise.all([
   import("./tenants.js"),
   import("./db.js"),
 ]);
@@ -21,6 +26,62 @@ function validContract(overrides = {}) {
     ...overrides,
   };
 }
+
+function validCustomTenantArea(overrides = {}) {
+  return {
+    floor_id: "Lantai 11",
+    geometry: {
+      type: "Polygon",
+      coordinates: [[[100, 100], [400, 100], [400, 300], [100, 100]]],
+    },
+    area_sqm: "120.5",
+    tenant_name: "PT Rooftop",
+    usage_type: "Antena",
+    status: "DISEWA",
+    rent_price: "1500000",
+    ...overrides,
+  };
+}
+
+test("validates and normalizes custom rooftop tenant areas", () => {
+  const area = normalizeCustomTenantArea(validCustomTenantArea());
+  assert.equal(area.buildingId, "GKP");
+  assert.equal(area.floorId, "Lantai 11");
+  assert.equal(area.areaSqm, 120.5);
+  assert.equal(area.rentPrice, 1500000);
+  assert.equal(area.tenantName, "PT Rooftop");
+
+  assert.throws(
+    () => normalizeCustomTenantArea(validCustomTenantArea({ floor_id: "Lantai 10" })),
+    /only be saved on Lantai 11/,
+  );
+  assert.throws(
+    () => normalizeCustomTenantArea(validCustomTenantArea({
+      geometry: {
+        type: "Polygon",
+        coordinates: [[[100, 100], [7000, 100], [400, 300], [100, 100]]],
+      },
+    })),
+    /within the Lantai 11 plan/,
+  );
+  assert.throws(
+    () => normalizeCustomTenantArea(validCustomTenantArea({ area_sqm: 0 })),
+    /area_sqm must be greater than 0/,
+  );
+  assert.throws(
+    () => normalizeCustomTenantArea(validCustomTenantArea({ status: "UNKNOWN" })),
+    /status must be/,
+  );
+  assert.throws(
+    () => normalizeCustomTenantArea(validCustomTenantArea({
+      geometry: {
+        type: "Polygon",
+        coordinates: [[[100, 100], [400, 100], [400, 300], [100, 200]]],
+      },
+    })),
+    /ring must be closed/,
+  );
+});
 
 test("normalizes numeric and installment contract input", () => {
   const contract = normalizeContract(validContract({

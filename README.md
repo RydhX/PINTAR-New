@@ -83,6 +83,17 @@ Editor. Sesi disimpan sebagai hash token di PostgreSQL agar login berlaku lintas
 function instance, lalu dihapus saat logout. Akun demo non-admin dinonaktifkan
 di production.
 
+### Area tenant khusus rooftop
+
+Admin dapat menggambar overlay area tenant hanya pada denah GKP **Lantai 11**.
+Karena denah SVG tidak memiliki skala fisik, masukkan luas dalam m² berdasarkan
+hasil pengukuran nyata; bentuk poligon hanya menjadi panduan visual. Sebelum
+menggunakan fitur pada database yang sudah berjalan, jalankan
+[supabase/custom-tenant-areas.sql](./supabase/custom-tenant-areas.sql) di Supabase
+SQL Editor. Untuk database baru, definisi tabel dan kebijakan RLS sudah termasuk
+di [supabase/schema.sql](./supabase/schema.sql). Endpoint backend menyimpan
+koordinat SVG bersama metadata dan hanya menerima penyimpanan dari admin.
+
 ## API
 
 - `GET /api/health` — status backend dan koneksi database.

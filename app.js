@@ -870,6 +870,7 @@ async function render() {
   renderedFloorKey = nextFloorKey;
   if (lastDashboardBuildingId !== state.buildingId) updateDashboard();
   updateNavigationSelectors();
+  CustomRooftop.detach();
   if (state.view !== "area" && areaBasemap) {
     areaBasemap.remove();
     areaBasemap = null;
@@ -1190,6 +1191,12 @@ async function showFloorPlan(token) {
     planId: f.planId,
     prefix: f.svgPrefix || f.id + "_",
     rooms: [...registry.values()].map((entry) => entry.el).filter(Boolean),
+  });
+  await CustomRooftop.attach({
+    buildingId,
+    floorId,
+    floorName: f.name,
+    svg,
   });
 }
 

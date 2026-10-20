@@ -86,6 +86,70 @@ function readNumber(value, field, integer = false) {
   return numeric;
 }
 
+export function normalizeCustomTenantArea(body) {
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    throw validationError("Custom area payload must be an object.");
+  }
+  if (body.floor_id !== "Lantai 11") {
+    throw validationError("Custom tenant areas can only be saved on Lantai 11.");
+  }
+
+  const geometry = body.geometry;
+  const ring = geometry?.type === "Polygon" && Array.isArray(geometry.coordinates)
+    ? geometry.coordinates[0]
+    : null;
+  if (
+    !ring ||
+    geometry.coordinates.length !== 1 ||
+    ring.length < 4 ||
+    ring.length > 2001 ||
+    ring.some((position) =>
+      !Array.isArray(position) ||
+      position.length !== 2 ||
+      !position.every(Number.isFinite) ||
+      position[0] < 0 ||
+      position[0] > 6000 ||
+      position[1] < 0 ||
+      position[1] > 3500
+    )
+  ) {
+    throw validationError("Polygon must be a single closed ring within the Lantai 11 plan.");
+  }
+  const first = ring[0];
+  const last = ring[ring.length - 1];
+  if (first[0] !== last[0] || first[1] !== last[1]) {
+    throw validationError("Polygon ring must be closed.");
+  }
+
+  const tenantName = readText(body.tenant_name, "tenant_name", 200);
+  const usageType = readText(body.usage_type, "usage_type", 80);
+  const status = body.status;
+  const areaSqm = readNumber(body.area_sqm, "area_sqm");
+  const rentPrice = readNumber(body.rent_price, "rent_price");
+  if (!tenantName) throw validationError("tenant_name is required.");
+  if (!usageType) throw validationError("usage_type is required.");
+  if (!["DISEWA", "TERSEDIA", "NEGOSIASI"].includes(status)) {
+    throw validationError("status must be DISEWA, TERSEDIA, or NEGOSIASI.");
+  }
+  if (areaSqm === null || areaSqm <= 0 || areaSqm > 10_000_000) {
+    throw validationError("area_sqm must be greater than 0 and no more than 10000000.");
+  }
+  if (rentPrice === null || rentPrice > 1_000_000_000_000) {
+    throw validationError("rent_price is required and must not exceed 1000000000000.");
+  }
+
+  return {
+    buildingId: "GKP",
+    floorId: "Lantai 11",
+    geometry,
+    areaSqm,
+    tenantName,
+    usageType,
+    status,
+    rentPrice,
+  };
+}
+
 function rentTotalCents(monthlyRent, monthCount) {
   const totalCents = Math.round(monthlyRent * 100) * monthCount;
   if (!Number.isSafeInteger(totalCents)) {
@@ -579,6 +643,53 @@ tenantsRouter.get("/rooms", async (req, res, next) => {
     next(error);
   }
 });
+
+tenantsRouter.get("/tenants/custom-polygon", async (_req, res, next) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT id, building_id, floor_id, geometry, area_sqm, tenant_name,
+        usage_type, status, rent_price, created_at
+       FROM custom_tenant_areas
+       WHERE building_id = 'GKP' AND floor_id = 'Lantai 11'
+       ORDER BY created_at, id`,
+    );
+    res.json({ records: rows });
+  } catch (error) {
+    next(error);
+  }
+});
+
+tenantsRouter.post(
+  "/tenants/custom-polygon",
+  allowRoles("admin"),
+  async (req, res, next) => {
+    try {
+      const feature = normalizeCustomTenantArea(req.body);
+      const { rows } = await pool.query(
+        `INSERT INTO custom_tenant_areas (
+          id, building_id, floor_id, geometry, area_sqm, tenant_name,
+          usage_type, status, rent_price
+        ) VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7, $8, $9)
+        RETURNING id, building_id, floor_id, geometry, area_sqm,
+          tenant_name, usage_type, status, rent_price, created_at`,
+        [
+          randomUUID(),
+          feature.buildingId,
+          feature.floorId,
+          JSON.stringify(feature.geometry),
+          feature.areaSqm,
+          feature.tenantName,
+          feature.usageType,
+          feature.status,
+          feature.rentPrice,
+        ],
+      );
+      res.status(201).json({ feature: rows[0] });
+    } catch (error) {
+      next(error);
+    }
+  },
+);
 
 tenantsRouter.patch("/utility-payments/:id", allowRoles("admin"), async (req, res, next) => {
   try {

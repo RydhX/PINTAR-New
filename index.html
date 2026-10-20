@@ -17,6 +17,10 @@
       integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
       crossorigin=""
     />
+    <link
+      rel="stylesheet"
+      href="https://unpkg.com/@geoman-io/leaflet-geoman-free@2.18.3/dist/leaflet-geoman.css"
+    />
     <link rel="stylesheet" href="style.css" />
   </head>
 
@@ -259,6 +263,48 @@
             </div>
           </div>
         <section id="map"></section>
+        <button id="rooftopDrawButton" class="rooftop-draw-button" type="button" aria-pressed="false" hidden>
+          Tambah Area Tenant (Gambar Poligon)
+        </button>
+        <p id="rooftopAreaStatus" class="rooftop-area-status" role="status" aria-live="polite" hidden></p>
+        <dialog id="customTenantAreaDialog" class="custom-tenant-area-dialog" aria-labelledby="customTenantAreaTitle">
+          <form id="customTenantAreaForm" class="custom-tenant-area-form">
+            <header>
+              <div class="eyebrow">DIGITASI ROOFTOP · LANTAI 11</div>
+              <h2 id="customTenantAreaTitle">Data Area Tenant</h2>
+              <p>Masukkan luas hasil pengukuran nyata. Poligon pada denah hanya panduan visual.</p>
+            </header>
+            <label>Nama tenant
+              <input name="tenant_name" type="text" maxlength="200" required />
+            </label>
+            <label>Jenis penggunaan
+              <select name="usage_type" required>
+                <option value="Tower">Tower</option>
+                <option value="Antena">Antena</option>
+                <option value="Booth">Booth</option>
+                <option value="Lainnya">Lainnya</option>
+              </select>
+            </label>
+            <label>Status sewa
+              <select name="status" required>
+                <option value="DISEWA">Disewa</option>
+                <option value="TERSEDIA">Tersedia</option>
+                <option value="NEGOSIASI">Dalam negosiasi</option>
+              </select>
+            </label>
+            <label>Luas hasil pengukuran (m²)
+              <input name="area_sqm" type="number" min="0.01" max="10000000" step="0.01" required />
+            </label>
+            <label>Harga sewa (Rp)
+              <input name="rent_price" type="number" min="0" max="1000000000000" step="1" required />
+            </label>
+            <p id="customTenantAreaStatus" class="custom-tenant-area-status" role="status" aria-live="polite"></p>
+            <footer>
+              <button id="cancelCustomTenantArea" type="button">Batal</button>
+              <button type="submit">Simpan area</button>
+            </footer>
+          </form>
+        </dialog>
         <aside
           id="floorPicker"
           class="floor-picker"
@@ -770,6 +816,8 @@
       integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
       crossorigin=""
     ></script>
+    <script src="https://unpkg.com/@geoman-io/leaflet-geoman-free@2.18.3/dist/leaflet-geoman.min.js"></script>
+    <script src="data/custom-rooftop.js"></script>
     <script src="app.js"></script>
     <script src="supabase-client.js"></script>
   </body>
