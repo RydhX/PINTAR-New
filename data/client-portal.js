@@ -18,6 +18,11 @@ const ClientPortal = (() => {
   const backButton = document.getElementById("invoiceBackButton");
   const downloadInvoicesButton = document.getElementById("downloadTenantInvoices");
   const invoiceTenantHeader = document.getElementById("clientInvoiceTenantHeader");
+  const adminTenantFilterEl = document.getElementById("adminTenantFilter");
+  const adminTenantSelectEl = document.getElementById("adminTenantSelect");
+  const adminInvoiceAnalyticsEl = document.getElementById("adminInvoiceAnalytics");
+  const adminInvoiceChartEl = document.getElementById("adminInvoiceChart");
+  const adminInvoiceChartYearEl = document.getElementById("adminInvoiceChartYear");
   const currency = new Intl.NumberFormat("id-ID", {
     style: "currency",
     currency: "IDR",
@@ -38,6 +43,8 @@ const ClientPortal = (() => {
   let refreshSequence = 0;
   let invoiceFilter = "unpaid";
   let invoiceYear = "all";
+  let chartYear = "all";
+  let selectedTenantId = "all";
   let invoicePage = 1;
   const INVOICES_PER_PAGE = 5;
 
@@ -71,7 +78,9 @@ const ClientPortal = (() => {
   }
 
   function invoiceCategory(invoice) {
-    return invoice.category === "UTILITAS" ? "utility" : "rent";
+    if (invoice.category === "UTILITAS") return "utility";
+    if (!invoice.category || invoice.category === "SEWA") return "rent";
+    return "other";
   }
 
   function invoiceYearValue(invoice) {
@@ -86,8 +95,13 @@ const ClientPortal = (() => {
     return readAmount(invoice.amountRp, "total tagihan");
   }
 
+  function visibleInvoices() {
+    if (Auth.currentUser?.role !== "admin" || selectedTenantId === "all") return invoiceRecords;
+    return invoiceRecords.filter((invoice) => invoice.tenantId === selectedTenantId);
+  }
+
   function updateInvoiceSummary() {
-    const unpaid = invoiceRecords.filter((invoice) => !isPaid(invoice));
+    const unpaid = visibleInvoices().filter((invoice) => !isPaid(invoice));
     const unpaidTotal = unpaid.reduce((total, invoice) => total + outstandingAmount(invoice), 0);
     unpaidTotalEl.textContent = currency.format(unpaidTotal);
     unpaidCountEl.textContent = `${unpaid.length} invoice`;
@@ -104,7 +118,7 @@ const ClientPortal = (() => {
   }
 
   function updateInvoiceYears() {
-    const years = [...new Set(invoiceRecords.map(invoiceYearValue).filter(Boolean))]
+    const years = [...new Set(visibleInvoices().map(invoiceYearValue).filter(Boolean))]
       .sort((left, right) => right.localeCompare(left));
     yearFilterEl.replaceChildren();
     const allYears = document.createElement("option");
@@ -121,13 +135,96 @@ const ClientPortal = (() => {
     yearFilterEl.value = invoiceYear;
   }
 
+  function updateChartYears() {
+    const years = [...new Set(visibleInvoices().map(invoiceYearValue).filter(Boolean))]
+      .sort((left, right) => right.localeCompare(left));
+    adminInvoiceChartYearEl.replaceChildren(new Option("Semua Tahun", "all"));
+    years.forEach((year) => adminInvoiceChartYearEl.add(new Option(year, year)));
+    if (chartYear !== "all" && !years.includes(chartYear)) chartYear = "all";
+    adminInvoiceChartYearEl.value = chartYear;
+  }
+
+  function updateTenantOptions() {
+    const tenants = [...new Map(tenantRecords.map((record) => [
+      record.tenantId,
+      { id: record.tenantId, name: record.tenantName },
+    ])).values()].sort((left, right) => left.name.localeCompare(right.name, "id"));
+    adminTenantSelectEl.replaceChildren(new Option("Semua tenant", "all"));
+    tenants.forEach((tenant) => adminTenantSelectEl.add(new Option(tenant.name, tenant.id)));
+    if (!tenants.some((tenant) => tenant.id === selectedTenantId)) selectedTenantId = "all";
+    adminTenantSelectEl.value = selectedTenantId;
+  }
+
+  function renderInvoiceChart() {
+    adminInvoiceChartEl.replaceChildren();
+    const totals = new Map([
+      ["rent", { label: "Sewa", paid: 0, outstanding: 0 }],
+      ["utility", { label: "Utilitas", paid: 0, outstanding: 0 }],
+      ["other", { label: "Lain-lain", paid: 0, outstanding: 0 }],
+    ]);
+    visibleInvoices()
+      .filter((invoice) => chartYear === "all" || invoiceYearValue(invoice) === chartYear)
+      .forEach((invoice) => {
+        const category = totals.get(invoiceCategory(invoice));
+        const total = readAmount(invoice.amountRp, "total tagihan");
+        const paid = Math.min(
+          total,
+          readAmount(invoice.paidAmountRp ?? (isPaid(invoice) ? total : 0), "nominal dibayar"),
+        );
+        category.paid += paid;
+        category.outstanding += total - paid;
+      });
+    const items = [...totals.values()];
+    const maxTotal = Math.max(...items.map((item) => item.paid + item.outstanding), 0);
+    if (!maxTotal) {
+      const empty = document.createElement("p");
+      empty.className = "invoice-chart-empty";
+      empty.textContent = "Belum ada data pembayaran untuk pilihan ini.";
+      adminInvoiceChartEl.appendChild(empty);
+      return;
+    }
+    items.forEach((item) => {
+      const total = item.paid + item.outstanding;
+      if (!total) return;
+      const row = document.createElement("div");
+      row.className = "invoice-chart-row";
+      row.setAttribute("role", "listitem");
+      const label = document.createElement("div");
+      label.className = "invoice-chart-label";
+      const title = document.createElement("strong");
+      title.textContent = item.label;
+      const amounts = document.createElement("span");
+      amounts.textContent = `${currency.format(item.paid)} dibayar · ${currency.format(item.outstanding)} tersisa`;
+      label.append(title, amounts);
+      const track = document.createElement("div");
+      track.className = "invoice-chart-track";
+      track.setAttribute(
+        "aria-label",
+        `${item.label}: ${currency.format(item.paid)} dibayar, ${currency.format(item.outstanding)} tersisa`,
+      );
+      const paidBar = document.createElement("span");
+      paidBar.className = "invoice-chart-segment is-paid";
+      paidBar.style.width = `${(item.paid / maxTotal) * 100}%`;
+      const outstandingBar = document.createElement("span");
+      outstandingBar.className = "invoice-chart-segment is-outstanding";
+      outstandingBar.style.width = `${(item.outstanding / maxTotal) * 100}%`;
+      track.append(paidBar, outstandingBar);
+      const totalEl = document.createElement("strong");
+      totalEl.className = "invoice-chart-total";
+      totalEl.textContent = currency.format(total);
+      row.append(label, track, totalEl);
+      adminInvoiceChartEl.appendChild(row);
+    });
+  }
+
   function filteredInvoices() {
-    return invoiceRecords
+    return visibleInvoices()
       .filter((invoice) => {
         if (invoiceFilter === "unpaid" && isPaid(invoice)) return false;
         if (invoiceFilter === "paid" && !isPaid(invoice)) return false;
         if (invoiceFilter === "rent" && invoiceCategory(invoice) !== "rent") return false;
         if (invoiceFilter === "utility" && invoiceCategory(invoice) !== "utility") return false;
+        if (invoiceFilter === "other" && invoiceCategory(invoice) !== "other") return false;
         return invoiceYear === "all" || invoiceYearValue(invoice) === invoiceYear;
       })
       .sort((left, right) => {
@@ -154,7 +251,9 @@ const ClientPortal = (() => {
       categoryBadge.className = `invoice-category-badge is-${category}`;
       categoryBadge.textContent = category === "utility"
         ? "Utilitas"
-        : `Sewa Ruangan${invoice.invoiceLabel ? ` · ${invoice.invoiceLabel}` : ""}`;
+        : category === "rent"
+          ? `Sewa Ruangan${invoice.invoiceLabel ? ` · ${invoice.invoiceLabel}` : ""}`
+          : "Lain-lain";
       const tenantCell = document.createElement("td");
       tenantCell.textContent = invoice.tenantName || "-";
       tenantCell.hidden = Auth.currentUser?.role !== "admin";
@@ -252,6 +351,21 @@ const ClientPortal = (() => {
     invoicePage += 1;
     renderInvoices();
   });
+  adminTenantSelectEl.addEventListener("change", () => {
+    selectedTenantId = adminTenantSelectEl.value;
+    invoicePage = 1;
+    updateInvoiceYears();
+    updateChartYears();
+    renderTenantDetails();
+    renderInvoices();
+    renderInvoiceChart();
+    updateTenantHeading();
+    statusEl.textContent = `Menampilkan ${visibleTenantRecords().length} kontrak dan ${visibleInvoices().length} invoice untuk ${selectedTenantId === "all" ? "semua tenant" : "tenant terpilih"}.`;
+  });
+  adminInvoiceChartYearEl.addEventListener("change", () => {
+    chartYear = adminInvoiceChartYearEl.value;
+    renderInvoiceChart();
+  });
 
   function recordsForInvoice(invoice) {
     if (invoice?.contractId) {
@@ -259,6 +373,42 @@ const ClientPortal = (() => {
     }
     const tenantName = invoice?.tenantName || Auth.currentUser?.tenantName;
     return tenantRecords.filter((record) => record.tenantName === tenantName);
+  }
+
+  function visibleTenantRecords() {
+    if (Auth.currentUser?.role !== "admin" || selectedTenantId === "all") return tenantRecords;
+    return tenantRecords.filter((record) => record.tenantId === selectedTenantId);
+  }
+
+  function updateTenantHeading() {
+    if (Auth.currentUser?.role !== "admin") return;
+    const tenant = tenantRecords.find((record) => record.tenantId === selectedTenantId);
+    tenantEl.textContent = selectedTenantId === "all"
+      ? `${new Set(tenantRecords.map((record) => record.tenantId)).size} tenant · ${tenantRecords.length} kontrak`
+      : tenant?.tenantName || "Tenant tidak ditemukan";
+  }
+
+  function renderTenantDetails() {
+    detailsEl.replaceChildren();
+    visibleTenantRecords().forEach((record) => {
+      const card = document.createElement("article");
+      card.className = "client-tenant-card";
+      const heading = document.createElement("h3");
+      heading.textContent = record.tenantName;
+      card.appendChild(heading);
+      addDetail(card, "PIC", record.pic);
+      addDetail(card, "Kontak client", record.contact);
+      addDetail(card, "Ruang", record.rooms.join(", "));
+      addDetail(card, "Status pembayaran", record.paymentScheme);
+      addDetail(card, "Tanggal mulai", record.startDate);
+      addDetail(card, "Tanggal akhir", record.endDate);
+      addDetail(card, "Nilai kontrak", record.contractValue == null ? null : currency.format(record.contractValue));
+      addDetail(card, "Biaya listrik / bulan", record.electricityCostRp == null ? null : currency.format(record.electricityCostRp));
+      addDetail(card, "Pemakaian listrik", record.electricityKwh == null ? null : `${record.electricityKwh} kWh`);
+      addDetail(card, "Biaya telepon / bulan", record.phoneCostRp == null ? null : currency.format(record.phoneCostRp));
+      addDetail(card, "Catatan", record.notes);
+      detailsEl.appendChild(card);
+    });
   }
 
   function invoiceTotal(invoice) {
@@ -500,6 +650,8 @@ const ClientPortal = (() => {
     const isAdmin = requestedUser?.role === "admin";
     downloadInvoicesButton.hidden = !isAdmin;
     invoiceTenantHeader.hidden = !isAdmin;
+    adminTenantFilterEl.hidden = !isAdmin;
+    adminInvoiceAnalyticsEl.hidden = !isAdmin;
     document.getElementById("clientPortalEyebrow").textContent = isAdmin
       ? "ADMINISTRASI"
       : "PORTAL CLIENT";
@@ -515,6 +667,7 @@ const ClientPortal = (() => {
     invoicesEl.replaceChildren();
     tenantRecords = [];
     invoiceRecords = [];
+    adminTenantSelectEl.replaceChildren(new Option("Semua tenant", "all"));
     updateInvoiceSummary();
     updateInvoiceYears();
     renderInvoices();
@@ -534,32 +687,19 @@ const ClientPortal = (() => {
       const user = requestedUser;
       tenantRecords = tenantRecordsResult.records;
       invoiceRecords = invoicePayload.records;
-      tenantEl.textContent = user?.role === "admin"
-        ? `${tenantRecords.length} kontrak tenant`
-        : user?.tenantName ? `Akun terhubung ke ${user.tenantName}` : "";
-      tenantRecords.forEach((record) => {
-        const card = document.createElement("article");
-        card.className = "client-tenant-card";
-        const heading = document.createElement("h3");
-        heading.textContent = record.tenantName;
-        card.appendChild(heading);
-        addDetail(card, "PIC", record.pic);
-        addDetail(card, "Kontak client", record.contact);
-        addDetail(card, "Ruang", record.rooms.join(", "));
-        addDetail(card, "Status pembayaran", record.paymentScheme);
-        addDetail(card, "Tanggal mulai", record.startDate);
-        addDetail(card, "Tanggal akhir", record.endDate);
-        addDetail(card, "Nilai kontrak", record.contractValue == null ? null : currency.format(record.contractValue));
-        addDetail(card, "Biaya listrik / bulan", record.electricityCostRp == null ? null : currency.format(record.electricityCostRp));
-        addDetail(card, "Pemakaian listrik", record.electricityKwh == null ? null : `${record.electricityKwh} kWh`);
-        addDetail(card, "Biaya telepon / bulan", record.phoneCostRp == null ? null : currency.format(record.phoneCostRp));
-        addDetail(card, "Catatan", record.notes);
-        detailsEl.appendChild(card);
-      });
+      if (user?.role === "admin") {
+        updateTenantOptions();
+        updateTenantHeading();
+        updateChartYears();
+      } else {
+        tenantEl.textContent = user?.tenantName ? `Akun terhubung ke ${user.tenantName}` : "";
+      }
+      renderTenantDetails();
       updateInvoiceYears();
       renderInvoices();
+      if (user?.role === "admin") renderInvoiceChart();
       statusEl.textContent = user?.role === "admin"
-        ? `Menampilkan ${tenantRecords.length} kontrak dan ${invoiceRecords.length} invoice dari seluruh tenant.`
+        ? `Menampilkan ${visibleTenantRecords().length} kontrak dan ${visibleInvoices().length} invoice untuk ${selectedTenantId === "all" ? "semua tenant" : "tenant terpilih"}.`
         : tenantRecords.length
           ? "Data dan invoice hanya menampilkan milik akun Anda."
           : "Belum ada data tenant yang terhubung ke akun ini.";

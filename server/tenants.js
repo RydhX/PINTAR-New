@@ -652,7 +652,7 @@ tenantsRouter.get("/tenants", async (req, res, next) => {
     const limitOffset = params.length + 2;
     const orderColumn = SORT_COLUMNS[sortBy];
     const { rows } = await pool.query(
-      `SELECT c.id, c.tenant, c.contact, c.pic, c.notes, c.payment_status,
+      `SELECT c.id, c.tenant_id, c.tenant, c.contact, c.pic, c.notes, c.payment_status,
        c.start_date::text, c.end_date::text, c.contract_value, c.billing_period,
        c.installment_interval_months, c.initial_payment_amount,
        c.partial_balance_due_date::text, c.partial_payment_schedule, c.installment_payments,
@@ -678,6 +678,7 @@ tenantsRouter.get("/tenants", async (req, res, next) => {
     res.json({
       records: rows.map((row) => ({
         id: row.id,
+        tenantId: row.tenant_id,
         tenantName: row.tenant,
         contact: row.contact,
         pic: row.pic,

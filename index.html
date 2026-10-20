@@ -502,6 +502,12 @@
         <p id="clientPortalStatus" class="tenant-table-status" role="status" aria-live="polite">
           Memuat data akun…
         </p>
+        <div id="adminTenantFilter" class="admin-tenant-filter" hidden>
+          <label for="adminTenantSelect">Pilih tenant untuk melihat status pembayaran dan invoice</label>
+          <select id="adminTenantSelect">
+            <option value="all">Semua tenant</option>
+          </select>
+        </div>
         <div id="clientTenantDetails" class="client-tenant-details"></div>
         <h3 class="client-invoice-heading">Invoice Saya</h3>
         <section class="client-invoice-metrics" aria-label="Ringkasan tagihan">
@@ -516,6 +522,24 @@
             <small id="clientNextDueAmount">Tidak ada tagihan mendatang</small>
           </article>
         </section>
+        <section id="adminInvoiceAnalytics" class="invoice-analytics" aria-labelledby="invoiceAnalyticsHeading" hidden>
+          <div class="invoice-analytics-heading">
+            <div>
+              <h3 id="invoiceAnalyticsHeading">Perbandingan Pembayaran</h3>
+              <p>Nilai invoice yang sudah dibayar dibandingkan dengan sisa tagihan.</p>
+            </div>
+            <label>Tahun
+              <select id="adminInvoiceChartYear">
+                <option value="all">Semua Tahun</option>
+              </select>
+            </label>
+          </div>
+          <div class="invoice-chart-legend" aria-label="Legenda grafik">
+            <span><i class="is-paid"></i>Dibayar</span>
+            <span><i class="is-outstanding"></i>Sisa tagihan</span>
+          </div>
+          <div id="adminInvoiceChart" class="invoice-chart" role="list" aria-live="polite"></div>
+        </section>
         <div class="client-invoice-controls">
           <div class="client-invoice-tabs" role="group" aria-label="Filter invoice">
             <button type="button" class="is-active" data-invoice-filter="unpaid" aria-pressed="true">Perlu Dibayar</button>
@@ -523,6 +547,7 @@
             <button type="button" data-invoice-filter="paid" aria-pressed="false">Lunas</button>
             <button type="button" data-invoice-filter="rent" aria-pressed="false">Sewa Ruangan</button>
             <button type="button" data-invoice-filter="utility" aria-pressed="false">Utilitas</button>
+            <button type="button" data-invoice-filter="other" aria-pressed="false">Lain-lain</button>
           </div>
           <label class="client-invoice-year-filter">Tahun
             <select id="clientInvoiceYear">

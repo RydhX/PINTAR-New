@@ -4167,6 +4167,87 @@ body[data-view="tenants"] {
 }
 .client-tenant-card span { color: var(--muted); font-size: 11px; }
 .client-tenant-card strong { overflow-wrap: anywhere; font-size: 13px; }
+.admin-tenant-filter {
+  display: grid;
+  gap: 7px;
+  max-width: 520px;
+  margin: 10px 0 18px;
+  color: #475569;
+  font-size: 12px;
+  font-weight: 600;
+}
+.admin-tenant-filter select,
+.invoice-analytics-heading select {
+  min-height: 40px;
+  padding: 8px 11px;
+  border: 1px solid #cbd5e1;
+  border-radius: 9px;
+  background: #fff;
+  color: #0f172a;
+  font: inherit;
+  font-weight: 500;
+}
+.invoice-analytics {
+  margin: 0 0 22px;
+  padding: 18px;
+  border: 1px solid #e2e8f0;
+  border-radius: 14px;
+  background: linear-gradient(145deg, #fff, #f8fafc);
+}
+.invoice-analytics-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+.invoice-analytics-heading h3 { margin: 0 0 5px; color: #0f172a; font-size: 16px; }
+.invoice-analytics-heading p { margin: 0; color: #64748b; font-size: 12px; }
+.invoice-analytics-heading label {
+  display: grid;
+  min-width: 145px;
+  gap: 5px;
+  color: #64748b;
+  font-size: 11px;
+}
+.invoice-chart-legend {
+  display: flex;
+  gap: 16px;
+  margin: 18px 0 12px;
+  color: #64748b;
+  font-size: 11px;
+}
+.invoice-chart-legend span { display: inline-flex; align-items: center; gap: 6px; }
+.invoice-chart-legend i {
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+}
+.invoice-chart-legend i.is-paid,
+.invoice-chart-segment.is-paid { background: #0f766e; }
+.invoice-chart-legend i.is-outstanding,
+.invoice-chart-segment.is-outstanding { background: #f59e0b; }
+.invoice-chart { display: grid; gap: 15px; }
+.invoice-chart-row {
+  display: grid;
+  grid-template-columns: minmax(170px, 1fr) minmax(120px, 2fr) minmax(120px, .8fr);
+  align-items: center;
+  gap: 14px;
+}
+.invoice-chart-label { display: grid; gap: 4px; min-width: 0; }
+.invoice-chart-label strong { color: #1e293b; font-size: 12px; }
+.invoice-chart-label span { color: #64748b; font-size: 10px; }
+.invoice-chart-track {
+  display: flex;
+  width: 100%;
+  height: 14px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #e2e8f0;
+}
+.invoice-chart-segment { height: 100%; transition: width .2s ease; }
+.invoice-chart-total { color: #334155; font-size: 12px; text-align: right; }
+.invoice-chart-empty { margin: 0; color: #64748b; font-size: 12px; }
+.invoice-category-badge.is-other { border-color: #cbd5e1; background: #f1f5f9; color: #475569; }
 .invoice-table-status {
   display: inline-flex;
   align-items: center;
@@ -4318,6 +4399,15 @@ body[data-view="tenants"] {
   .client-invoice-metric { min-height: 98px; padding: 14px; }
   .client-invoice-controls { align-items: stretch; flex-direction: column; }
   .client-invoice-year-filter { justify-content: space-between; }
+  .invoice-analytics-heading { flex-direction: column; }
+  .invoice-analytics-heading label { width: 100%; }
+  .invoice-chart-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 8px 12px;
+  }
+  .invoice-chart-label { grid-column: 1; }
+  .invoice-chart-total { grid-column: 2; grid-row: 1; }
+  .invoice-chart-track { grid-column: 1 / -1; grid-row: 2; }
 }
 @media (max-width: 460px) {
   .client-invoice-pagination { align-items: flex-start; flex-direction: column; }
